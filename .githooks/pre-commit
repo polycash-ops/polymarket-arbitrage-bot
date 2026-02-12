@@ -1,0 +1,60 @@
+#!/bin/bash
+# Pre-commit hook: Detect secrets before they get committed
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+NC='\033[0m'
+
+echo -e "${GREEN}[security]${NC} Running secret detection..."
+
+PATTERNS=(
+  'AKIA[0-9A-Z]{16}'
+  'AIza[A-Za-z0-9_-]{35}'
+  'sk-[A-Za-z0-9]{20,}'
+  'ghp_[A-Za-z0-9]{36}'
+  'ghs_[A-Za-z0-9]{36}'
+  'glpat-[A-Za-z0-9_-]{20}'
+  'xox[bpas]-[A-Za-z0-9-]+'
+  'sk_live_[A-Za-z0-9]{24,}'
+  'SG\.[A-Za-z0-9_-]{22}\.[A-Za-z0-9_-]{43}'
+  'ya29\.[A-Za-z0-9_-]+'
+  '-----BEGIN (RSA |EC )?PRIVATE KEY-----'
+  'mongodb\+srv://[^\s]+'
+  'postgres://[^\s]+'
+  'redis://[^\s]+:[^\s]+@'
+)
+
+FOUND=0
+FILES_CHECKED=0
+
+STAGED_FILES=$(git diff --cached --name-only --diff-filter=ACMR | grep -v -E '\.(png|jpg|jpeg|gif|ico|svg|woff|ttf|pdf|zip|gz)$')
+
+for FILE in $STAGED_FILES; do
+  [ ! -f "$FILE" ] && continue
+  FILES_CHECKED=$((FILES_CHECKED + 1))
+
+  for PATTERN in "${PATTERNS[@]}"; do
+    MATCHES=$(grep -nE "$PATTERN" "$FILE" 2>/dev/null || true)
+    if [ -n "$MATCHES" ]; then
+      echo -e "${RED}[BLOCKED] Potential secret in $FILE:${NC}"
+      echo "$MATCHES" | head -3
+      FOUND=$((FOUND + 1))
+    fi
+  done
+done
+
+DANGEROUS_FILES=('.env' '.env.local' '.env.production' 'credentials.json' 'secrets.yaml' 'service-account.json')
+for DFILE in "${DANGEROUS_FILES[@]}"; do
+  if git diff --cached --name-only | grep -qx "$DFILE"; then
+    echo -e "${RED}[BLOCKED] Sensitive file: $DFILE${NC}"
+    FOUND=$((FOUND + 1))
+  fi
+done
+
+if [ $FOUND -gt 0 ]; then
+  echo -e "${RED}COMMIT BLOCKED: $FOUND secret(s) detected${NC}"
+  exit 1
+fi
+
+echo -e "${GREEN}[security] $FILES_CHECKED files checked, no secrets found.${NC}"
+exit 0
