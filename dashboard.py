@@ -95,8 +95,8 @@ h1{font-size:clamp(1.5rem,4vw,2.2rem);line-height:1.15;margin:0 0 8px;letter-spa
   <div><div class="metric-label">Analysis graph nodes / capacity</div><div class="metric" id="analysisNodes">—</div><div class="metric-label">Edges / capacity</div><div id="analysisEdges" style="font-weight:700">—</div></div>
   <div><div class="metric-label">Recorded snapshots</div><div class="metric" id="analysisObservations">—</div><div class="metric-label">Verified settlements / forecast accuracy</div><div id="analysisSettled" style="font-weight:700">Awaiting verified settlements</div><div class="metric-label">Model Brier vs market midpoint Brier</div><div id="analysisBrier" style="font-weight:700">—</div></div>
  </div>
- <p class="small">The analysis graph scores directional forecasts against each contract's verified close. It samples quote changes on the dashboard's 5-second refresh cadence and keeps 15-minute and hourly contracts separate by market ID and end timestamp. Order-book depth is marked unavailable until a genuine depth feed is connected; it is never inferred from bid/ask quotes.</p>
- <div class="table-wrap"><table><thead><tr><th>Contract horizon</th><th>Market / close</th><th>Bid</th><th>Ask</th><th>Midpoint</th><th>Depth imbalance</th><th>Bid depth</th><th>Ask depth</th><th>Time to close</th></tr></thead><tbody id="polymarketQuoteRows"><tr><td colspan="9" class="empty">Waiting for Polymarket quotes</td></tr></tbody></table></div>
+ <p class="small">The analysis graph scores directional forecasts against each contract's verified close. It samples quote changes on the dashboard's 5-second refresh cadence and keeps 15-minute and hourly contracts separate by market ID and end timestamp. Depth comes from the Polymarket CLOB top-five order-book levels when the book endpoint responds; unavailable readings remain explicitly marked, never inferred from quotes.</p>
+ <div class="table-wrap"><table><thead><tr><th>Contract horizon</th><th>Market / close</th><th>Bid</th><th>Ask</th><th>Midpoint</th><th>Midpoint Δ / refresh</th><th>Depth imbalance</th><th>Bid depth</th><th>Ask depth</th><th>Time to close</th></tr></thead><tbody id="polymarketQuoteRows"><tr><td colspan="10" class="empty">Waiting for Polymarket quotes</td></tr></tbody></table></div>
 </div></section>
 <section class="section">
  <div class="section-head"><h2>Market data</h2><span class="small">Latest observed exchange prices</span></div>
@@ -205,6 +205,7 @@ function paintPolymarketQuotes(quotes){
   const remaining=q?duration(q.remaining_seconds):"—";
   const vals=[label,q?(String(q.market_id||"—")+" · "+close):"Not currently detected",
    q?pct(q.bid):"—",q?pct(q.ask):"—",q?pct(q.midpoint):"—",
+   q&&q.refresh_changes&&num(q.refresh_changes.midpoint_change_refresh)!==null?pct(q.refresh_changes.midpoint_change_refresh):"—",
    q&&num(q.depth_imbalance)!==null?pct(q.depth_imbalance):"Unavailable",
    q&&num(q.bid_depth)!==null?Number(q.bid_depth).toFixed(2):"—",
    q&&num(q.ask_depth)!==null?Number(q.ask_depth).toFixed(2):"—",remaining];
