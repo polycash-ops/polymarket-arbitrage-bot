@@ -1,4 +1,4 @@
-# AI-Enhanced Polymarket Arbitrage Bot
+# Connectome-driven Polymarket Arbitrage Research Bot
 # Core dependencies
 
 # Async HTTP and WebSocket
@@ -11,8 +11,7 @@ pandas==2.2.0
 numpy==1.26.3
 pyyaml==6.0.1
 
-# AI/ML (Claude integration would go here)
-# anthropic==0.25.1  # Uncomment when implementing Claude API
+# Outcome-trained Connectome graphs use Python's built-in SQLite support.
 
 # Market data and trading
 ccxt==4.2.25  # Cryptocurrency exchange library
