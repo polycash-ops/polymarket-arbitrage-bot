@@ -31,3 +31,8 @@ connectomes:
     max_edges: 1000000
     min_samples_for_gate: 1
     learning_rate: 0.03
+  analysis:
+    max_nodes: 1000000
+    max_edges: 1000000
+    min_samples_for_gate: 1
+    learning_rate: 0.03
