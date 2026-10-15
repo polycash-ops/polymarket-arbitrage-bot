@@ -216,6 +216,9 @@ class MarketMonitor:
                 if not self.session:
                     await asyncio.sleep(1)
                     continue
+                # Label the previous contract once its official Gamma outcome is final.
+                # This must run even when no active contract is currently discoverable.
+                await self._poll_closed_contracts(url, time.time())
                 self.scan_count += 1
                 now = time.time()
                 await self._poll_closed_contracts(url, now)
