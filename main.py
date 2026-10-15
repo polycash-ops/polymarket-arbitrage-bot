@@ -121,8 +121,10 @@ class TradingBot:
                     checkpoints.append(label)
         if not checkpoints:
             return
-        prices = self.market_monitor.get_latest_prices()
         move, exchanges = self.opportunity_detector._consensus_move()
+        polymarket_history = self.opportunity_detector.price_history.get("polymarket")
+        odds_change = float(polymarket_history.get_probability_change(10) or 0.0) if polymarket_history else 0.0
+        prediction_source = "btc_consensus" if move is not None and len(exchanges) >= 2 else "market_midpoint"
         if move is not None and abs(move) >= 0.001:
             direction = "up" if move > 0 else "down"
         else:
