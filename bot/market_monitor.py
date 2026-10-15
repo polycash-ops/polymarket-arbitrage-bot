@@ -260,15 +260,6 @@ class MarketMonitor:
                             break
                     if data:
                         break
-                if not data:
-                    async with self.session.get(url, params={
-                        "limit": 1000, "offset": 0, "active": "true", "closed": "false"
-                    }) as response:
-                        if response.status != 200:
-                            logger.warning("Polymarket Gamma returned HTTP %s", response.status)
-                        else:
-                            result = await response.json()
-                            data = result if isinstance(result, list) else []
                 # Always inspect the active market list so both short-dated and
                 # hourly BTC contracts can be sampled on the same refresh cadence.
                 async with self.session.get(url, params={
