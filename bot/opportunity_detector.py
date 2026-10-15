@@ -34,6 +34,7 @@ class Opportunity:
     market_end_time: Optional[float] = None
     estimated_edge_probability: float = 0.0
     yes_outcome_index: int = 0
+    connectome_event_id: Optional[str] = None
 
 
 @dataclass
