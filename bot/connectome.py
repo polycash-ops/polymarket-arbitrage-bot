@@ -107,7 +107,18 @@ class Connectome:
         delay_bucket = "fast" if delay < 7 else "normal" if delay < 12 else "slow"
         confidence_bucket = "low" if confidence < 0.7 else "mid" if confidence < 0.85 else "high"
         spread_bucket = "unknown" if quote_spread is None else "tight" if quote_spread <= 0.03 else "wide"
+        checkpoint = str(getattr(opportunity, "checkpoint", "unknown"))
+        remaining = float(getattr(opportunity, "time_remaining", 0.0) or 0.0)
+        midpoint = float(getattr(opportunity, "midpoint", 0.5) or 0.5)
+        depth = getattr(opportunity, "depth_imbalance", None)
+        remaining_bucket = "early" if remaining > 600 else "mid" if remaining > 300 else "late" if remaining > 60 else "expiry"
+        midpoint_bucket = "low" if midpoint < 0.35 else "lean_down" if midpoint < 0.48 else "balanced" if midpoint <= 0.52 else "lean_up" if midpoint <= 0.65 else "high"
+        depth_bucket = "unknown" if depth is None else "sell_heavy" if float(depth) < -0.2 else "balanced" if float(depth) <= 0.2 else "buy_heavy"
         base = {
+            "checkpoint": checkpoint,
+            "remaining": remaining_bucket,
+            "midpoint": midpoint_bucket,
+            "depth": depth_bucket,
             "direction": direction,
             "action": action,
             "move": move_bucket,
@@ -119,9 +130,11 @@ class Connectome:
         if role == "research":
             # Research has a separate representation and independently learned graph.
             base = {
-                "direction": direction,
-                "move_delay": f"{move_bucket}:{delay_bucket}",
-                "spread_confidence": f"{spread_bucket}:{confidence_bucket}",
+                "checkpoint_midpoint": f"{checkpoint}:{midpoint_bucket}",
+                "remaining_depth": f"{remaining_bucket}:{depth_bucket}",
+                "direction_move": f"{direction}:{move_bucket}",
+                "delay_spread": f"{delay_bucket}:{spread_bucket}",
+                "confidence": confidence_bucket,
                 "exchange_consensus": exchanges,
                 "action": action,
             }
@@ -250,6 +263,29 @@ class Connectome:
                 )
         logger.info("CONNECTOME_LEARNING graph=%s event=%s outcome=%s", self.name, event_id, outcome)
         return True
+
+    def record_scan_observation(self, opportunity: Any, role: str) -> str:
+        """Persist one checkpoint snapshot for an active 15-minute contract."""
+        return self.record_signal(opportunity, role=role)
+
+    def settle_market(self, market_id: str, actual_up: bool) -> int:
+        """Label every pending checkpoint for a closed contract against its actual direction."""
+        with self._connect() as con:
+            rows = con.execute(
+                "SELECT event_id,features_json FROM observations WHERE market_id=? AND outcome IS NULL",
+                (market_id,),
+            ).fetchall()
+        settled = 0
+        for row in rows:
+            features = json.loads(row["features_json"])
+            direction = str(features.get("direction", "unknown")).lower()
+            won = (direction == "up" and actual_up) or (direction == "down" and not actual_up)
+            if direction in ("up", "down") and self.settle(str(row["event_id"]), won):
+                settled += 1
+        if settled:
+            logger.info("CONNECTOME_CONTRACT_SETTLED graph=%s market=%s checkpoints=%d actual_up=%s",
+                        self.name, market_id, settled, actual_up)
+        return settled
 
     def stats(self) -> Dict[str, Any]:
         with self._connect() as con:
