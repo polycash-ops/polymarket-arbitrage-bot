@@ -394,7 +394,7 @@ class Connectome:
         # without generating a new node merely because a timestamp changed.
         state_keys = (
             "market_horizon", "contract_phase", "remaining_fine", "midpoint_regime",
-            "midpoint_fine", "midpoint", "bid_ask_spread", "spread_fine",
+            "midpoint_fine", "bid_ask_spread", "spread_fine",
             "bid_refresh_move", "ask_refresh_move", "midpoint_refresh_move",
             "bid_15m_move", "ask_15m_move", "midpoint_15m_move",
             "bid_1h_move", "ask_1h_move", "midpoint_1h_move",
@@ -738,7 +738,7 @@ class Connectome:
                 "SELECT COUNT(*) FROM edges WHERE updated_at>=?", (now - 900.0,)
             ).fetchone()[0]
             total_node_visits = con.execute("SELECT COALESCE(SUM(visits),0) FROM nodes").fetchone()[0]
-            total_edge_traversals = con.execute("SELECT COALESCE(SUM(updates),0) FROM edges").fetchone()[0]
+            total_edge_traversals = con.execute("SELECT COALESCE(SUM(traversals),0) FROM edges").fetchone()[0]
             learned_edge_updates = con.execute(
                 "SELECT COALESCE(SUM(wins+losses),0) FROM edges"
             ).fetchone()[0]
