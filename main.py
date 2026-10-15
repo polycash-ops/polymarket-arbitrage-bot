@@ -3,6 +3,7 @@ import argparse
 import asyncio
 import logging
 import time
+from types import SimpleNamespace
 from pathlib import Path
 from typing import Any, Dict
 
@@ -34,6 +35,7 @@ class TradingBot:
         graph_config = self.config.get("connectomes", {})
         self.decision_connectome = Connectome("decision", graph_config.get("decision", {}))
         self.research_connectome = Connectome("research", graph_config.get("research", {}))
+        self.scan_checkpoints_seen = set()
         self.stats = {
             "start_time": time.time(),
             "opportunities_detected": 0,
@@ -91,8 +93,74 @@ class TradingBot:
 
     def _setup_callbacks(self):
         self.market_monitor.add_callback(self.opportunity_detector.on_price_update)
+        self.market_monitor.add_callback(self._on_market_scan)
+        self.market_monitor.add_settlement_callback(self._on_contract_settled)
         self.opportunity_detector.add_callback(self._on_opportunity_detected)
         self.trade_executor.add_callback(self._on_trade_executed)
+
+    async def _on_market_scan(self, exchange, point):
+        if exchange != "polymarket" or not point.market_id or not point.end_time:
+            return
+        now = float(point.timestamp)
+        remaining = max(0.0, float(point.end_time) - now)
+        market_id = str(point.market_id)
+        seen = self.scan_checkpoints_seen.setdefault(market_id, set())
+        checkpoints = []
+        if "first_seen" not in seen:
+            checkpoints.append("first_seen")
+        # Capture the first observed scan at or past each horizon. If a market is
+        # discovered late, missed earlier horizons are not fabricated.
+        for label, seconds in (("10m", 600), ("5m", 300), ("1m", 60)):
+            if label not in seen and remaining <= seconds:
+                checkpoints.append(label)
+        if not checkpoints:
+            return
+        prices = self.market_monitor.get_latest_prices()
+        move, exchanges = self.opportunity_detector._consensus_move()
+        if move is not None and abs(move) >= 0.001:
+            direction = "up" if move > 0 else "down"
+        else:
+            direction = "up" if float(point.price) >= 0.5 else "down"
+        move_abs = abs(float(move or 0.0))
+        midpoint = float(point.price)
+        confidence = min(0.99, max(0.01,
+            0.50 + min(move_abs / 0.20, 1.0) * 0.20
+            + min(abs(midpoint - 0.5) / 0.5, 1.0) * 0.20
+            + (0.10 if len(exchanges) >= 2 else 0.0)))
+        btc_prices = [prices[name].price for name in ("binance", "coinbase", "kraken") if name in prices]
+        for checkpoint in checkpoints:
+            seen.add(checkpoint)
+            snapshot = SimpleNamespace(
+                timestamp=now, market_id=market_id, checkpoint=checkpoint,
+                time_remaining=remaining, midpoint=midpoint, depth_imbalance=None,
+                exchange_moved=",".join(exchanges) if exchanges else "none",
+                polymarket_delay=max(0.0, now - self.opportunity_detector.last_polymarket_change),
+                price_difference=move_abs, confidence=confidence, direction=direction,
+                recommended_action="buy_yes" if direction == "up" else "buy_no",
+                yes_bid=point.bid, yes_ask=point.ask, market_question=point.question,
+                market_end_time=point.end_time, expected_profit=0.0,
+                connectome_event_id=f"scan:{market_id}:{checkpoint}",
+            )
+            d = self.decision_connectome.predict(snapshot, role="decision")
+            r = self.research_connectome.predict(snapshot, role="research")
+            self.decision_connectome.record_scan_observation(snapshot, role="decision")
+            self.research_connectome.record_scan_observation(snapshot, role="research")
+            logger.info(
+                "CONNECTOME_SCAN market=%s checkpoint=%s remaining=%.1fs midpoint=%.4f "
+                "btc_move_pct=%.4f direction=%s raw_score=%.3f decision_p=%.3f "
+                "decision_samples=%d research_p=%.3f research_samples=%d",
+                market_id, checkpoint, remaining, midpoint, move_abs, direction, confidence,
+                d["probability"], d["samples"], r["probability"], r["samples"],
+            )
+
+    async def _on_contract_settled(self, market_id: str, actual_up: bool):
+        d_count = self.decision_connectome.settle_market(market_id, actual_up)
+        r_count = self.research_connectome.settle_market(market_id, actual_up)
+        self.scan_checkpoints_seen.pop(market_id, None)
+        logger.info(
+            "CONNECTOME_MARKET_LABEL market=%s actual_up=%s decision_labels=%d research_labels=%d",
+            market_id, actual_up, d_count, r_count,
+        )
 
     async def _on_opportunity_detected(self, opportunity: Opportunity):
         self.stats["opportunities_detected"] += 1
