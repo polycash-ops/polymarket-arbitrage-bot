@@ -174,7 +174,13 @@ class MarketMonitor:
                         if response.status == 200:
                             result = await response.json()
                             if isinstance(result, list):
-                                data.extend(result)
+                                # Some API responses ignore unknown query filters; verify
+                                # the returned slug locally before trusting the result.
+                                data.extend(
+                                    market for market in result
+                                    if isinstance(market, dict)
+                                    and str(market.get("slug") or "") == expected_slug
+                                )
                 if not data:
                     async with self.session.get(url, params={
                         "limit": 1000, "offset": 0, "active": "true", "closed": "false"
