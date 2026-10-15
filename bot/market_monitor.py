@@ -51,7 +51,7 @@ class MarketMonitor:
         self.callbacks.append(callback)
 
     def add_settlement_callback(self, callback):
-        """Register a callback for verified final outcomes of closed 15-minute contracts."""
+        """Register a callback for verified final outcomes of closed 15-minute and hourly contracts."""
         self.settlement_callbacks.append(callback)
 
     async def _poll_closed_contracts(self, url: str, now: float):
@@ -214,7 +214,7 @@ class MarketMonitor:
         return value if isinstance(value, list) else []
 
     async def _monitor_polymarket(self):
-        """Poll the active 15-minute BTC Up/Down contract and publish quote snapshots."""
+        """Poll active BTC Up/Down 15-minute and hourly contracts and publish quote snapshots."""
         url = "https://gamma-api.polymarket.com/markets"
         while self.running:
             try:
