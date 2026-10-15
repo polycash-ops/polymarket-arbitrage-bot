@@ -98,7 +98,7 @@ h1{font-size:clamp(1.5rem,4vw,2.2rem);line-height:1.15;margin:0 0 8px;letter-spa
  </div>
 </section>
 <section class="section panel"><div class="panel-inner section-head"><h2>Recent paper trades</h2><span class="small" id="tradeSummary">0 recorded</span></div>
- <div class="table-wrap"><table><thead><tr><th>Trade</th><th>Action</th><th>Direction</th><th>Stake</th><th>Status</th><th>P/L</th><th>Signal score</th></tr></thead><tbody id="tradeRows"><tr><td class="empty" colspan="7">No paper trades recorded yet.</td></tr></tbody></table></div>
+ <div class="table-wrap"><table><thead><tr><th>Trade</th><th>Timestamp (ET)</th><th>Action</th><th>Direction</th><th>Stake</th><th>Execution status</th><th>Result</th><th>P/L</th><th>Signal score</th></tr></thead><tbody id="tradeRows"><tr><td class="empty" colspan="7">No paper trades recorded yet.</td></tr></tbody></table></div>
 </section>
 <p class="foot">Observed quotes are not guaranteed executable prices. This dashboard is research and paper simulation only; live order execution remains hard-blocked.</p>
 </main>
@@ -124,10 +124,35 @@ function paintConnectomes(graphs){
  put("researchBestCheckpoint",r.recommended_checkpoint||"Not enough samples (20 per checkpoint)");
  put("connectomeSummary","Accuracy uses every settled internal snapshot; internal reference trades are not shown");
 }
+function tradeTimestamp(t){
+ const raw=num(t.executed_at??t.timestamp??t.created_at);
+ if(raw===null)return "—";
+ const date=new Date(raw<1e12?raw*1000:raw);
+ if(!Number.isFinite(date.getTime()))return "—";
+ return date.toLocaleString("en-US",{timeZone:"America/New_York",month:"2-digit",day:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:true});
+}
+function tradeResult(t){
+ const status=String(t.status??"").toLowerCase();
+ if(status==="failed"||status==="cancelled")return "FAILURE";
+ if(t.resolved===true||status==="settled"){
+  const pnl=num(t.profit_loss_usd??t.profit_loss);
+  if(pnl===null)return "SETTLED";
+  return pnl>0.000001?"SUCCESS":pnl< -0.000001?"FAILURE":"BREAK-EVEN";
+ }
+ return "PENDING";
+}
 function paintTrades(trades){
- const tbody=el("tradeRows");tbody.replaceChildren();put("tradeSummary",trades.length+" recorded");
- if(!trades.length){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=7;td.className="empty";td.textContent="No paper trades recorded yet.";tr.appendChild(td);tbody.appendChild(tr);return}
- trades.forEach((t,i)=>{const tr=document.createElement("tr"),vals=[t.id??(i+1),t.action??"—",t.direction??"—",money(t.amount_usd??t.amount),t.status??"—",money(t.profit_loss_usd??t.profit_loss),num(t.confidence)===null?"—":(num(t.confidence)<=1?pct(t.confidence):num(t.confidence).toFixed(1)+"%")];vals.forEach((v,j)=>{const td=document.createElement("td");td.textContent=String(v);if(j===4){const b=document.createElement("span");b.className="badge "+(/settled|completed|closed|won|success/i.test(String(v))?"good":/fail|error|lost/i.test(String(v))?"bad":"warn");b.textContent=String(v);td.replaceChildren(b)}tr.appendChild(td)});tbody.appendChild(tr)})
+ const tbody=el("tradeRows");tbody.replaceChildren();put("tradeSummary",trades.length+" recorded · updates every 5 seconds");
+ if(!trades.length){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=9;td.className="empty";td.textContent="No paper trades recorded yet.";tr.appendChild(td);tbody.appendChild(tr);return}
+ trades.forEach((t,i)=>{
+  const tr=document.createElement("tr"),result=tradeResult(t);
+  const vals=[t.id??(i+1),tradeTimestamp(t),t.action??"—",t.direction??"—",money(t.amount_usd??t.amount),String(t.status??"—").toUpperCase(),result,money(t.profit_loss_usd??t.profit_loss),num(t.confidence)===null?"—":(num(t.confidence)<=1?pct(t.confidence):num(t.confidence).toFixed(1)+"%")];
+  vals.forEach((v,j)=>{
+   const td=document.createElement("td");td.textContent=String(v);
+   if(j===5||j===6){const b=document.createElement("span");b.className="badge "+(j===6?(result==="SUCCESS"?"good":result==="FAILURE"?"bad":"warn"):(/settled/i.test(String(v))?"good":/failed|cancelled/i.test(String(v))?"bad":/executed/i.test(String(v))?"warn":"warn"));b.textContent=String(v);td.replaceChildren(b)}
+   tr.appendChild(td)
+  });tbody.appendChild(tr)
+ })
 }
 function drawProfitCurve(points){
  const canvas=el("profitChart");if(!canvas)return;
@@ -207,6 +232,7 @@ def status():
                 "profit_loss_usd": t.profit_loss, "confidence": getattr(t.opportunity, "confidence", None),
                 "direction": getattr(t.opportunity, "direction", None), "exchange_moved": getattr(t.opportunity, "exchange_moved", None),
                 "market_id": t.market_id, "market_question": getattr(t.opportunity, "market_question", None),
+                "executed_at": t.executed_at, "timestamp": t.executed_at or getattr(t.opportunity, "timestamp", None),
                 "entry_price": t.executed_price, "shares": t.shares, "resolved": t.resolved, "notes": t.notes,
             }
             for t in bot.trade_executor.get_recent_trades(20)
