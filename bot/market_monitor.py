@@ -9,7 +9,7 @@ import json
 import time
 from typing import Dict, Optional
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 import logging
 
 logger = logging.getLogger(__name__)
@@ -155,19 +155,36 @@ class MarketMonitor:
     async def _monitor_polymarket(self):
         """Poll the active 15-minute BTC Up/Down contract and publish quote snapshots."""
         url = "https://gamma-api.polymarket.com/markets"
-        params = {"limit": 100, "offset": 0, "active": "true", "closed": "false"}
         while self.running:
             try:
                 if not self.session:
                     await asyncio.sleep(1)
                     continue
-                async with self.session.get(url, params=params) as response:
-                    if response.status != 200:
-                        logger.warning("Polymarket Gamma returned HTTP %s", response.status)
-                    else:
-                        data = await response.json()
-                        now = time.time()
-                        candidates = []
+                now = time.time()
+                now_dt = datetime.fromtimestamp(now, timezone.utc)
+                window_minute = (now_dt.minute // 15) * 15
+                window_start = now_dt.replace(minute=window_minute, second=0, microsecond=0)
+                slug_starts = [window_start, window_start + timedelta(minutes=15)]
+                data = []
+                # Query the known 15-minute BTC contract slug directly first; Gamma's
+                # first page of active markets often omits these short-window contracts.
+                for start_at in slug_starts:
+                    expected_slug = f"cpc-btc-updown-15m-{start_at:%Y-%m-%d}-{start_at:%H%M}z"
+                    async with self.session.get(url, params={"slug": expected_slug}) as response:
+                        if response.status == 200:
+                            result = await response.json()
+                            if isinstance(result, list):
+                                data.extend(result)
+                if not data:
+                    async with self.session.get(url, params={
+                        "limit": 1000, "offset": 0, "active": "true", "closed": "false"
+                    }) as response:
+                        if response.status != 200:
+                            logger.warning("Polymarket Gamma returned HTTP %s", response.status)
+                        else:
+                            result = await response.json()
+                            data = result if isinstance(result, list) else []
+                candidates = []
                         for market in data if isinstance(data, list) else []:
                             if not isinstance(market, dict):
                                 continue
