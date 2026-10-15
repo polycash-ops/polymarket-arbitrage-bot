@@ -5,10 +5,10 @@ Main entry point - Orchestrates all components for 24/7 trading
 import asyncio
 import argparse
 import logging
+from pathlib import Path
 import yaml
 import json
 import time
-from pathlib import Path
 from typing import Dict, Any
 
 # Bot components
@@ -17,6 +17,9 @@ from bot.opportunity_detector import OpportunityDetector, Opportunity
 from bot.trade_executor import TradeExecutor, Trade
 from bot.ai_analyzer import AIAnalyzer, AIInsight
 from bot.self_improvement import SelfImprovement
+
+# Ensure the log directory exists before FileHandler is constructed.
+Path('logs').mkdir(parents=True, exist_ok=True)
 
 # Configure logging
 logging.basicConfig(
@@ -269,16 +272,10 @@ async def main():
         args.paper_trading = True
         
     if args.live_trading:
-        logger.warning("⚠️ LIVE TRADING MODE - YOU CAN LOSE REAL MONEY!")
-        response = input("Type 'I UNDERSTAND THE RISKS' to continue: ")
-        if response != 'I UNDERSTAND THE RISKS':
-            logger.info("❌ Live trading cancelled")
-            return
+        logger.error("LIVE TRADING IS HARD-BLOCKED IN THIS REPOSITORY. Use paper mode only.")
+        return
             
-    # Create logs directory
-    Path('logs').mkdir(exist_ok=True)
-    
-    # Initialize and start bot
+        # Initialize and start bot
     bot = TradingBot(args.config, paper_trading=args.paper_trading)
     
     logger.info("🎯 Starting temporal arbitrage bot based on 0x8dxd strategy")
