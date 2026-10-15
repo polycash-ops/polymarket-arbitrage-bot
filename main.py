@@ -106,13 +106,19 @@ class TradingBot:
         market_id = str(point.market_id)
         seen = self.scan_checkpoints_seen.setdefault(market_id, set())
         checkpoints = []
-        if "first_seen" not in seen:
+        first_seen_now = "first_seen" not in seen
+        if first_seen_now:
             checkpoints.append("first_seen")
-        # Capture the first observed scan at or past each horizon. If a market is
-        # discovered late, missed earlier horizons are not fabricated.
-        for label, seconds in (("10m", 600), ("5m", 300), ("1m", 60)):
-            if label not in seen and remaining <= seconds:
-                checkpoints.append(label)
+            seen.add("first_seen")
+            # A horizon already passed at discovery is recorded as missed, not
+            # falsely represented as an observation from that time.
+            for label, seconds in (("10m", 600), ("5m", 300), ("1m", 60)):
+                if remaining <= seconds:
+                    seen.add(label)
+        else:
+            for label, seconds in (("10m", 600), ("5m", 300), ("1m", 60)):
+                if label not in seen and remaining <= seconds:
+                    checkpoints.append(label)
         if not checkpoints:
             return
         prices = self.market_monitor.get_latest_prices()
