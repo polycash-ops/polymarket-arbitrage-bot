@@ -208,6 +208,27 @@ class TradingBot:
             "OPPORTUNITY market=%s direction=%s move=%.4f%% detector_confidence=%.3f",
             opportunity.market_id, opportunity.direction, opportunity.price_difference, opportunity.confidence,
         )
+        remaining = max(0.0, float(opportunity.market_end_time or time.time()) - time.time())
+        opportunity.time_remaining = remaining
+        point = self.market_monitor.get_latest_prices().get("polymarket")
+        if point and point.market_id == opportunity.market_id:
+            opportunity.midpoint = ((float(point.bid) + float(point.ask)) / 2.0
+                                    if point.bid is not None and point.ask is not None and
+                                    0 < point.bid <= point.ask < 1 else float(point.price))
+            opportunity.yes_outcome_index = int(point.yes_outcome_index)
+        else:
+            opportunity.midpoint = 0.5
+        history = self.opportunity_detector.price_history.get("polymarket")
+        opportunity.market_probability_change = float(history.get_probability_change(10) or 0.0) if history else 0.0
+        move, agreeing = self.opportunity_detector._consensus_move()
+        opportunity.btc_consensus_move = float(move or 0.0)
+        opportunity.agreeing_exchange_count = len(agreeing)
+        opportunity.prediction_source = "btc_consensus" if move is not None and len(agreeing) >= 2 else "market_midpoint"
+        if remaining >= 840:
+            opportunity.checkpoint = "first_seen"
+        else:
+            opportunity.checkpoint = next((label for seconds, label in ((600, "10m"), (300, "5m"), (180, "3m"), (60, "1m"))
+                                           if abs(remaining - seconds) <= 30), "between")
         decision = self.decision_connectome.predict(opportunity, role="decision")
         research = self.research_connectome.predict(opportunity, role="research")
         logger.info(
