@@ -1,8 +1,8 @@
 """Two independent, outcome-trained sparse Connectome graphs for paper research.
 
 Each graph supports up to one million nodes and one million directed edges. Capacity
-is virtual: only observed nodes/edges are persisted. Learning labels are applied only
-after a paper trade has a verified, final settlement.
+is virtual: only observed nodes/edges are persisted. Every market snapshot is retained
+independently of paper trades and labelled after verified contract settlement.
 """
 import hashlib
 import json
@@ -300,7 +300,7 @@ class Connectome:
                         weight = min(1.0, float(edge["updates"]) / 20.0)
                         weighted_sum += (float(edge["weight"]) + 1.0) / 2.0 * weight
                         weight_total += weight
-        # Count each settled paper trade once; feature-node visits are not independent samples.
+        # Directional correctness and Up/Down outcome probabilities are separate targets.
         global_probability = (total_wins + 1.0) / (samples + 2.0)
         node_probability = sum(node_probabilities) / len(node_probabilities) if node_probabilities else global_probability
         probability = 0.6 * node_probability + 0.4 * global_probability if node_probabilities else global_probability
