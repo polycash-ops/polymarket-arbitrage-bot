@@ -84,6 +84,24 @@ h1{font-size:clamp(1.5rem,4vw,2.2rem);line-height:1.15;margin:0 0 8px;letter-spa
   </div>
 </div></section>
 <section class="section">
+  <div class="section-head"><h2>Connectome learning graphs</h2><span class="small" id="connectomeSummary">Learning from settled paper outcomes only</span></div>
+  <div class="grid-two">
+    <article class="card">
+      <h2>Decision Connectome</h2>
+      <div class="metric-label">Active nodes / capacity</div><div class="metric" id="decisionNodes">—</div>
+      <div class="metric-label" style="margin-top:12px">Active edges / capacity</div><div class="metric" id="decisionEdges">—</div>
+      <div class="metric-label" style="margin-top:12px">Settled observations · win rate</div><div id="decisionLearning" style="font-weight:700">—</div>
+    </article>
+    <article class="card">
+      <h2>Research Connectome</h2>
+      <div class="metric-label">Active nodes / capacity</div><div class="metric" id="researchNodes">—</div>
+      <div class="metric-label" style="margin-top:12px">Active edges / capacity</div><div class="metric" id="researchEdges">—</div>
+      <div class="metric-label" style="margin-top:12px">Settled observations · win rate</div><div id="researchLearning" style="font-weight:700">—</div>
+    </article>
+  </div>
+  <p class="small">Capacities are configured ceilings, not pre-created graph elements. Nodes and edges grow only as observations arrive; outcomes update weights after verified settlement.</p>
+</section>
+<section class="section">
   <div class="section-head"><h2>Market data</h2><span class="small">Latest reported exchange prices</span></div>
   <div class="feed">
     <div class="feed-item"><div class="feed-name">Binance</div><div class="feed-price" id="binance">—</div><div class="small" id="bcSpread">vs Coinbase: —</div></div>
@@ -105,6 +123,18 @@ const pct=v=>{const n=num(v);return n===null?'—':(n*100).toFixed(2)+'%'};
 const price=v=>{const n=num(v);return n===null?'—':'$'+n.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})};
 const duration=v=>{const n=Math.max(0,Math.floor(num(v)||0));const h=Math.floor(n/3600),m=Math.floor(n%3600/60),s=n%60;return h?h+'h '+m+'m':m?m+'m '+s+'s':s+'s'};
 function put(id,value){el(id).textContent=value}
+function paintConnectomes(graphs){
+ const fmt=n=>num(n)===null?'—':Math.trunc(num(n)).toLocaleString('en-US');
+ const rate=g=>num(g&&g.win_rate)===null?'Not yet measured':pct(g.win_rate);
+ const d=graphs&&graphs.decision||{},r=graphs&&graphs.research||{};
+ put('decisionNodes',fmt(d.nodes_active)+' / '+fmt(d.node_capacity));
+ put('decisionEdges',fmt(d.edges_active)+' / '+fmt(d.edge_capacity));
+ put('decisionLearning',fmt(d.settled_observations)+' settled · '+rate(d));
+ put('researchNodes',fmt(r.nodes_active)+' / '+fmt(r.node_capacity));
+ put('researchEdges',fmt(r.edges_active)+' / '+fmt(r.edge_capacity));
+ put('researchLearning',fmt(r.settled_observations)+' settled · '+rate(r));
+ put('connectomeSummary','Decision + research · settlement-only learning');
+}
 function paintTrades(trades){
  const tbody=el('tradeRows');tbody.replaceChildren();put('tradeSummary',trades.length+' recorded');
  if(!trades.length){const tr=document.createElement('tr'),td=document.createElement('td');td.colSpan=7;td.className='empty';td.textContent='No paper trades recorded yet.';tr.appendChild(td);tbody.appendChild(tr);return}
@@ -119,6 +149,7 @@ async function refresh(){
   put('tradesCount',num(p.total_trades??s.trades_executed)??0);put('winRate','Win rate: '+(num(p.win_rate)===null?'—':(num(p.win_rate)>1?num(p.win_rate).toFixed(1)+'%':pct(p.win_rate))));
   put('opportunities',num(s.opportunities_detected)??0);put('scanCount',num(d.scan_count)??0);put('uptime','Uptime: '+duration(s.uptime));
   window._lastEquityCurve=Array.isArray(d.equity_curve)?d.equity_curve:[];drawProfitCurve(window._lastEquityCurve);
+  paintConnectomes(d.connectomes||{});
   put('mode',String(d.mode??'paper').toUpperCase());put('avgProfit',money(p.avg_profit_per_trade));put('bestTrade',money(p.best_trade));put('worstTrade',money(p.worst_trade));
   put('binance',price(prices.binance));put('coinbase',price(prices.coinbase));put('kraken',price(prices.kraken));
   put('bcSpread', 'vs Coinbase: '+pct(sp['binance-coinbase']));put('ckSpread','vs Kraken: '+pct(sp['coinbase-kraken']));put('bkSpread','vs Binance: '+pct(sp['binance-kraken']));
