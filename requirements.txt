@@ -49,3 +49,6 @@ sqlalchemy==2.0.25
 # Optional: Redis (for distributed operations)
 redis==5.0.1
 aioredis==2.0.1
+# Dashboard server
+Flask==3.1.0
+gunicorn==23.0.0
