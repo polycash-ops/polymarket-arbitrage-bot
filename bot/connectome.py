@@ -150,6 +150,22 @@ class Connectome:
         source = str(getattr(opportunity, "prediction_source", "btc_consensus") or "btc_consensus")
         agreeing_count = int(getattr(opportunity, "agreeing_exchange_count", 0) or 0)
         consensus_bucket = "none" if agreeing_count == 0 else "two" if agreeing_count == 2 else "three_plus"
+        exchange_moves = {
+            "binance": getattr(opportunity, "exchange_binance_move", None),
+            "coinbase": getattr(opportunity, "exchange_coinbase_move", None),
+            "kraken": getattr(opportunity, "exchange_kraken_move", None),
+        }
+        def exchange_signal(value):
+            if value is None:
+                return "missing"
+            value = float(value)
+            if value > 0.005:
+                return "up"
+            if value < -0.005:
+                return "down"
+            return "flat"
+        exchange_signals = {name: exchange_signal(value) for name, value in exchange_moves.items()}
+        exchange_relationship = str(getattr(opportunity, "exchange_relationship", "unknown"))
         remaining_bucket = "early" if remaining > 600 else "mid" if remaining > 300 else "late" if remaining > 60 else "expiry"
         midpoint_bucket = "low" if midpoint < 0.35 else "lean_down" if midpoint < 0.48 else "balanced" if midpoint <= 0.52 else "lean_up" if midpoint <= 0.65 else "high"
         depth_bucket = "unknown" if depth is None else "sell_heavy" if float(depth) < -0.2 else "balanced" if float(depth) <= 0.2 else "buy_heavy"
@@ -161,6 +177,10 @@ class Connectome:
             "odds_momentum": odds_momentum,
             "prediction_source": source,
             "consensus": consensus_bucket,
+            "binance_signal": exchange_signals["binance"],
+            "coinbase_signal": exchange_signals["coinbase"],
+            "kraken_signal": exchange_signals["kraken"],
+            "exchange_relationship": exchange_relationship,
             "direction": direction,
             "action": action,
             "move": move_bucket,
@@ -177,6 +197,10 @@ class Connectome:
             "_snapshot_time_remaining_seconds": round(remaining, 3),
             "_snapshot_delay_seconds": round(delay, 3),
             "_snapshot_btc_move": round(move, 6),
+            "_snapshot_binance_move": round(float(exchange_moves["binance"]), 6) if exchange_moves["binance"] is not None else None,
+            "_snapshot_coinbase_move": round(float(exchange_moves["coinbase"]), 6) if exchange_moves["coinbase"] is not None else None,
+            "_snapshot_kraken_move": round(float(exchange_moves["kraken"]), 6) if exchange_moves["kraken"] is not None else None,
+            "_snapshot_exchange_relationship": exchange_relationship,
             "_snapshot_direction": direction,
         }
         if role == "research":
@@ -191,6 +215,10 @@ class Connectome:
                 "delay_spread": f"{delay_bucket}:{spread_bucket}",
                 "consensus_confidence": f"{consensus_bucket}:{confidence_bucket}",
                 "exchange_consensus": exchanges,
+                "binance_signal": exchange_signals["binance"],
+                "coinbase_signal": exchange_signals["coinbase"],
+                "kraken_signal": exchange_signals["kraken"],
+                "exchange_relationship": exchange_relationship,
                 "action": action,
             }
         # Preserve exact values in each observation row for audit and calibration,
