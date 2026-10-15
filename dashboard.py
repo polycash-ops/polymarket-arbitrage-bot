@@ -144,7 +144,9 @@ def status():
         data["recent_trades"] = [
             {"id": t.id, "action": t.action, "amount_usd": t.amount, "status": t.status.value,
              "profit_loss_usd": t.profit_loss, "confidence": getattr(t.opportunity, "confidence", None),
-             "direction": getattr(t.opportunity, "direction", None), "exchange_moved": getattr(t.opportunity, "exchange_moved", None)}
+             "direction": getattr(t.opportunity, "direction", None), "exchange_moved": getattr(t.opportunity, "exchange_moved", None),
+             "market_id": t.market_id, "market_question": getattr(t.opportunity, "market_question", None),
+             "entry_price": t.executed_price, "shares": t.shares, "resolved": t.resolved, "notes": t.notes}
             for t in bot.trade_executor.get_recent_trades(20)
         ]
         return jsonify(data)
