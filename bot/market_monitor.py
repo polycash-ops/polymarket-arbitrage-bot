@@ -31,6 +31,7 @@ class MarketMonitor:
         self.callbacks = []
         self.running = False
         self.session: Optional[aiohttp.ClientSession] = None
+        self.polymarket_market_key: Optional[str] = None
 
     def add_callback(self, callback):
         """Add callback for price updates."""
@@ -57,53 +58,55 @@ class MarketMonitor:
             await self.session.close()
 
     async def _monitor_binance(self):
-        """Monitor Binance WebSocket for BTC prices."""
-        uri = "wss://stream.binance.com:9443/ws/btcusdt@ticker"
+        """Poll Binance US public BTC/USD endpoints for US-hosted workers."""
+        url = "https://api.binance.us/api/v3/ticker/24hr"
+        book_url = "https://api.binance.us/api/v3/ticker/bookTicker"
         while self.running:
             try:
-                async with websockets.connect(uri) as websocket:
-                    logger.info("✅ Connected to Binance WebSocket")
-                    async for message in websocket:
-                        if not self.running:
-                            break
-                        data = json.loads(message)
-                        point = PricePoint(
-                            exchange="binance", price=float(data["c"]),
-                            timestamp=time.time(), volume=float(data["v"]),
-                            bid=float(data["b"]), ask=float(data["a"])
-                        )
-                        self.prices["binance"] = point
-                        await self._notify_callbacks("binance", point)
+                if not self.session:
+                    await asyncio.sleep(1)
+                    continue
+                async with self.session.get(url, params={"symbol": "BTCUSD"}) as response:
+                    response.raise_for_status()
+                    data = await response.json()
+                bid = ask = None
+                async with self.session.get(book_url, params={"symbol": "BTCUSD"}) as response:
+                    if response.status == 200:
+                        book = await response.json()
+                        bid, ask = float(book["bidPrice"]), float(book["askPrice"])
+                point = PricePoint(
+                    exchange="binance", price=float(data["lastPrice"]),
+                    timestamp=time.time(), volume=float(data.get("volume") or 0),
+                    bid=bid, ask=ask
+                )
+                self.prices["binance"] = point
+                await self._notify_callbacks("binance", point)
+                await asyncio.sleep(2)
             except Exception as exc:
-                logger.error("❌ Binance WebSocket error: %s", exc)
+                logger.warning("Binance US REST polling error: %s", exc)
                 await asyncio.sleep(5)
 
     async def _monitor_coinbase(self):
-        """Monitor Coinbase WebSocket for BTC prices."""
-        uri = "wss://ws-feed.pro.coinbase.com"
+        """Poll Coinbase's public Exchange REST ticker."""
+        url = "https://api.exchange.coinbase.com/products/BTC-USD/ticker"
         while self.running:
             try:
-                async with websockets.connect(uri) as websocket:
-                    await websocket.send(json.dumps({
-                        "type": "subscribe",
-                        "product_ids": ["BTC-USD"],
-                        "channels": ["ticker"]
-                    }))
-                    logger.info("✅ Connected to Coinbase WebSocket")
-                    async for message in websocket:
-                        if not self.running:
-                            break
-                        data = json.loads(message)
-                        if data.get("type") == "ticker":
-                            point = PricePoint(
-                                exchange="coinbase", price=float(data["price"]),
-                                timestamp=time.time(), volume=float(data.get("volume_24h") or 0),
-                                bid=float(data["best_bid"]), ask=float(data["best_ask"])
-                            )
-                            self.prices["coinbase"] = point
-                            await self._notify_callbacks("coinbase", point)
+                if not self.session:
+                    await asyncio.sleep(1)
+                    continue
+                async with self.session.get(url, headers={"User-Agent": "paper-arbitrage-research/1.0"}) as response:
+                    response.raise_for_status()
+                    data = await response.json()
+                point = PricePoint(
+                    exchange="coinbase", price=float(data["price"]),
+                    timestamp=time.time(), volume=float(data.get("volume") or 0),
+                    bid=float(data["bid"]), ask=float(data["ask"])
+                )
+                self.prices["coinbase"] = point
+                await self._notify_callbacks("coinbase", point)
+                await asyncio.sleep(2)
             except Exception as exc:
-                logger.error("❌ Coinbase WebSocket error: %s", exc)
+                logger.warning("Coinbase REST polling error: %s", exc)
                 await asyncio.sleep(5)
 
     async def _monitor_kraken(self):
@@ -185,12 +188,21 @@ class MarketMonitor:
                                     volume = float(market.get("volume") or 0)
                                 except (TypeError, ValueError):
                                     volume = 0.0
-                                point = PricePoint(
-                                    exchange="polymarket", price=yes_price,
-                                    timestamp=time.time(), volume=volume
+                                market_key = str(market.get("slug") or market.get("id") or "")
+                                previous = self.prices.get("polymarket")
+                                changed = (
+                                    previous is None
+                                    or abs(previous.price - yes_price) > 1e-6
+                                    or market_key != self.polymarket_market_key
                                 )
-                                self.prices["polymarket"] = point
-                                await self._notify_callbacks("polymarket", point)
+                                if changed:
+                                    point = PricePoint(
+                                        exchange="polymarket", price=yes_price,
+                                        timestamp=time.time(), volume=volume
+                                    )
+                                    self.prices["polymarket"] = point
+                                    self.polymarket_market_key = market_key
+                                    await self._notify_callbacks("polymarket", point)
                             else:
                                 logger.warning(
                                     "Could not parse Polymarket probability for market %s",
