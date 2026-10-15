@@ -244,11 +244,22 @@ class TradingBot:
         # required to find a quote at least one hour old without mixing contracts.
         analysis_history = self.analysis_connectome.recent_market_observations(market_id, now - 7200.0)
         def movement_from_history(field, horizon_seconds, current_value):
-            eligible = [row for row in analysis_history if now - float(row.get("timestamp", now)) >= horizon_seconds]
-            if not eligible:
-                return None
-            # Use the closest prior quote at/before the requested horizon.
-            prior = max(eligible, key=lambda row: float(row.get("timestamp", 0.0)))
+            # Refresh timestamps rarely land on exact 900s/3600s boundaries.
+            # Prefer a snapshot within ±45s of the horizon; otherwise use the
+            # nearest older snapshot. Never use a future quote.
+            aged = [
+                (max(0.0, now - float(row.get("timestamp", now))), row)
+                for row in analysis_history
+                if float(row.get("timestamp", now)) <= now
+            ]
+            nearby = [(age, row) for age, row in aged if abs(age - horizon_seconds) <= 45.0]
+            if nearby:
+                _, prior = min(nearby, key=lambda pair: abs(pair[0] - horizon_seconds))
+            else:
+                older = [(age, row) for age, row in aged if age >= horizon_seconds]
+                if not older:
+                    return None
+                _, prior = min(older, key=lambda pair: pair[0] - horizon_seconds)
             previous_value = prior.get(field)
             return None if previous_value is None else current_value - float(previous_value)
         def average_depth(horizon_seconds):
