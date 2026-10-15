@@ -423,7 +423,10 @@ class Connectome:
         return event_id
 
     def predict(self, opportunity: Any, role: str = "decision") -> Dict[str, Any]:
-        features = self._features(opportunity, role)
+        all_features = self._features(opportunity, role)
+        # Private audit fields (including checkpoint-label lists and raw floats)
+        # are not categorical graph signatures and must never reach SQL lookups.
+        features = {key: value for key, value in all_features.items() if not key.startswith("_")}
         node_probabilities = []
         node_up_probabilities = []
         evidence_nodes = 0
@@ -472,7 +475,7 @@ class Connectome:
         probability = 0.6 * node_probability + 0.4 * global_probability if node_probabilities else global_probability
         if weight_total:
             probability = 0.8 * probability + 0.2 * (weighted_sum / weight_total)
-        market_up_prior = min(0.999, max(0.001, float(features.get("_snapshot_market_up_probability", 0.5))))
+        market_up_prior = min(0.999, max(0.001, float(all_features.get("_snapshot_market_up_probability", 0.5))))
         if up_samples:
             node_up_probability = (
                 sum(node_up_probabilities) / len(node_up_probabilities)
