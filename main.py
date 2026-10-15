@@ -156,6 +156,19 @@ class TradingBot:
             exchange_relationship = "two_down_one_up"
         else:
             exchange_relationship = "flat_or_mixed"
+        def pair_relationship(left, right):
+            if left is None or right is None:
+                return "missing"
+            left_sign = 1 if left > 0.005 else -1 if left < -0.005 else 0
+            right_sign = 1 if right > 0.005 else -1 if right < -0.005 else 0
+            if left_sign == right_sign:
+                return "agree_up" if left_sign > 0 else "agree_down" if left_sign < 0 else "both_flat"
+            return "bin_disagree" if left_sign == 0 or right_sign == 0 else "opposed"
+        pair_relationships = {
+            "binance_coinbase": pair_relationship(exchange_moves["binance"], exchange_moves["coinbase"]),
+            "binance_kraken": pair_relationship(exchange_moves["binance"], exchange_moves["kraken"]),
+            "coinbase_kraken": pair_relationship(exchange_moves["coinbase"], exchange_moves["kraken"]),
+        }
         history = self.opportunity_detector.price_history.get("polymarket")
         odds_change = float(history.get_probability_change(10) or 0.0) if history else 0.0
         midpoint = (float(point.bid) + float(point.ask)) / 2.0
@@ -177,6 +190,7 @@ class TradingBot:
             exchange_coinbase_move=exchange_moves["coinbase"],
             exchange_kraken_move=exchange_moves["kraken"],
             exchange_relationship=exchange_relationship,
+            exchange_pair_relationships=pair_relationships,
             exchange_positive_count=positive_count, exchange_negative_count=negative_count,
             prediction_source=prediction_source,
             exchange_moved=",".join(exchanges) if exchanges else "none",
