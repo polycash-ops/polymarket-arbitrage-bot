@@ -286,29 +286,19 @@ class TradingBot:
             "research_probability=%.3f research_samples=%d",
             decision["probability"], decision["samples"], research["probability"], research["samples"],
         )
-        settings = self.config.get("connectomes", {}).get("decision", {})
-        learned_floor = float(settings.get("min_learned_probability", 0.50))
-        minimum = float(self.config.get("opportunity_detection", {}).get("min_confidence", 0.7))
-        if decision["ready_for_gate"]:
-            opportunity.confidence = 0.5 * float(opportunity.confidence) + 0.5 * float(decision["probability"])
-            if decision["probability"] < learned_floor:
-                logger.info(
-                    "Paper signal rejected by decision Connectome: %.3f < %.3f",
-                    decision["probability"], learned_floor,
-                )
-                return
-        if opportunity.confidence < minimum:
-            logger.info("Paper signal rejected: confidence %.3f < %.3f", opportunity.confidence, minimum)
-            return
-
-        # The executor uses only the observed Polymarket quote for a simulated fill.
-        trade = await self.trade_executor.execute_opportunity(opportunity)
-        if not trade:
-            return
+        # Forecast-only research phase: agents collect observations and score
+        # forecasts after authoritative settlement. No paper or live positions
+        # are opened while the agents are building their accuracy history.
         logger.info(
-            "PAPER_POSITION_OPEN id=%s market=%s entry=%.4f stake=$%.2f; settlement pending",
-            trade.id, trade.market_id, trade.executed_price or trade.expected_price, trade.amount,
+            "FORECAST_ONLY market=%s checkpoint=%s direction=%s "
+            "decision_p=%.3f decision_up_p=%.3f decision_settled_samples=%d "
+            "research_p=%.3f research_up_p=%.3f research_settled_samples=%d "
+            "trade_execution=disabled",
+            opportunity.market_id, opportunity.checkpoint, opportunity.direction,
+            decision["probability"], decision["up_probability"], decision["samples"],
+            research["probability"], research["up_probability"], research["samples"],
         )
+        return
 
     async def _on_trade_executed(self, trade: Trade):
         if trade.executed_at is not None and not trade.resolved:
