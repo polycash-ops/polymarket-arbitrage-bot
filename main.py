@@ -122,6 +122,7 @@ class TradingBot:
         if market_id not in self.scan_checkpoints_seen:
             seen = self.decision_connectome.observed_checkpoints(market_id)
             seen.update(self.research_connectome.observed_checkpoints(market_id))
+            seen.update(self.analysis_connectome.observed_checkpoints(market_id))
             self.scan_checkpoints_seen[market_id] = seen
         seen = self.scan_checkpoints_seen[market_id]
         previous_snapshot = self.last_connectome_snapshot_at.get(market_id, 0.0)
@@ -226,26 +227,40 @@ class TradingBot:
             "timestamp": now, "bid": float(point.bid), "ask": float(point.ask), "midpoint": midpoint
         }
         # Read recent stored observations to derive same-contract movement windows.
-        analysis_history = self.analysis_connectome.recent_market_observations(market_id, now - 3600.0)
+        # Read prior snapshots for this exact contract. Two hours of lookback is
+        # required to find a quote at least one hour old without mixing contracts.
+        analysis_history = self.analysis_connectome.recent_market_observations(market_id, now - 7200.0)
         def movement_from_history(field, horizon_seconds, current_value):
             eligible = [row for row in analysis_history if now - float(row.get("timestamp", now)) >= horizon_seconds]
             if not eligible:
                 return None
-            oldest = min(eligible, key=lambda row: float(row.get("timestamp", now)))
-            previous_value = oldest.get(field)
+            # Use the closest prior quote at/before the requested horizon.
+            prior = max(eligible, key=lambda row: float(row.get("timestamp", 0.0)))
+            previous_value = prior.get(field)
             return None if previous_value is None else current_value - float(previous_value)
+        def average_depth(horizon_seconds):
+            values = [
+                float(row["depth_imbalance"]) for row in analysis_history
+                if row.get("depth_imbalance") is not None
+                and 0 <= now - float(row.get("timestamp", now)) <= horizon_seconds
+            ]
+            return sum(values) / len(values) if values else getattr(point, "depth_imbalance", None)
         bid_move_15m = movement_from_history("bid", 900.0, float(point.bid))
         ask_move_15m = movement_from_history("ask", 900.0, float(point.ask))
         midpoint_move_15m = movement_from_history("midpoint", 900.0, midpoint)
         bid_move_1h = movement_from_history("bid", 3600.0, float(point.bid))
         ask_move_1h = movement_from_history("ask", 3600.0, float(point.ask))
         midpoint_move_1h = movement_from_history("midpoint", 3600.0, midpoint)
+        depth_15m = average_depth(900.0)
+        depth_1h = average_depth(3600.0)
         snapshot = SimpleNamespace(
             timestamp=now, market_id=market_id, checkpoint=checkpoint,
             checkpoint_labels=checkpoint_labels or [checkpoint],
             time_remaining=remaining, minutes_remaining=remaining / 60.0,
             midpoint=midpoint, market_up_probability=midpoint,
-            depth_imbalance=None, market_probability_change=odds_change,
+            depth_imbalance=getattr(point, "depth_imbalance", None),
+            bid_depth=getattr(point, "bid_depth", None), ask_depth=getattr(point, "ask_depth", None),
+            market_probability_change=odds_change,
             btc_consensus_move=move, agreeing_exchange_count=len(exchanges),
             exchange_binance_move=exchange_moves["binance"],
             exchange_coinbase_move=exchange_moves["coinbase"],
@@ -266,7 +281,7 @@ class TradingBot:
             midpoint_change_15m=midpoint_move_15m,
             bid_change_1h=bid_move_1h, ask_change_1h=ask_move_1h,
             midpoint_change_1h=midpoint_move_1h,
-            order_depth_imbalance_15m=None, order_depth_imbalance_1h=None,
+            order_depth_imbalance_15m=depth_15m, order_depth_imbalance_1h=depth_1h,
             market_end_time=point.end_time, expected_profit=0.0,
             yes_outcome_index=int(getattr(point, "yes_outcome_index", 0) or 0),
             connectome_event_id=f"scan:{market_id}:{int(now * 1000)}",
