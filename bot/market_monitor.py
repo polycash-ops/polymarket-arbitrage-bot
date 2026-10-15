@@ -217,6 +217,7 @@ class MarketMonitor:
         """Poll active BTC Up/Down 15-minute and hourly contracts and publish quote snapshots."""
         url = "https://gamma-api.polymarket.com/markets"
         while self.running:
+            cycle_started = time.time()
             try:
                 if not self.session:
                     await asyncio.sleep(1)
@@ -372,7 +373,9 @@ class MarketMonitor:
                     if interval == "15m":
                         self.polymarket_market_key = slug
                     await self._notify_callbacks("polymarket" if interval == "15m" else "polymarket_1h", point)
-                await asyncio.sleep(5)
+                # Target the dashboard's five-second refresh cadence, accounting
+                # for request time so network latency does not add a second full delay.
+                await asyncio.sleep(max(0.0, 5.0 - (time.time() - cycle_started)))
             except Exception as exc:
                 logger.error("Polymarket polling error: %s", exc)
                 await asyncio.sleep(5)
