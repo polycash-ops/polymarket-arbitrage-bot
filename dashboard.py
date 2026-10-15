@@ -198,7 +198,7 @@ function drawProfitCurve(points){
 }
 function paintPolymarketQuotes(quotes){
  const body=el("polymarketQuoteRows");if(!body)return;body.replaceChildren();
- const horizons=[["15m","polymarket"],["1h","polymarket_hourly"]];
+ const horizons=[["15m","polymarket"],["1h","polymarket_1h"]];
  horizons.forEach(([label,key])=>{
   const q=quotes[key],tr=document.createElement("tr");
   const close=q&&num(q.end_time)!==null?new Date(num(q.end_time)*1000).toLocaleString("en-US",{timeZone:"America/New_York",hour:"2-digit",minute:"2-digit",second:"2-digit"}):"—";
