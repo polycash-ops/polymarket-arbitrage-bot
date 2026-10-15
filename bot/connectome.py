@@ -159,6 +159,18 @@ class Connectome:
                 "exchange_consensus": exchanges,
                 "action": action,
             }
+        # Preserve exact values in each observation row for audit and calibration,
+        # while the graph itself learns only from the bounded categorical signatures.
+        base.update({
+            "_raw_scan_confidence": round(min(0.999, max(0.001, confidence)), 6),
+            "_snapshot_midpoint": round(midpoint, 6),
+            "_snapshot_market_up_probability": round(float(getattr(opportunity, "market_up_probability", midpoint) or midpoint), 6),
+            "_snapshot_odds_change": round(odds_change, 6),
+            "_snapshot_time_remaining_seconds": round(remaining, 3),
+            "_snapshot_delay_seconds": round(delay, 3),
+            "_snapshot_btc_move": round(move, 6),
+            "_snapshot_direction": direction,
+        })
         return base
 
     def record_signal(self, opportunity: Any, role: str = "decision") -> str:
