@@ -350,6 +350,11 @@ class Connectome:
         base.update({
             "_raw_scan_confidence": round(min(0.999, max(0.001, confidence)), 6),
             "_snapshot_midpoint": round(midpoint, 6),
+            "_snapshot_bid": round(float(bid), 6) if bid is not None else None,
+            "_snapshot_ask": round(float(ask), 6) if ask is not None else None,
+            "_snapshot_depth_imbalance": round(float(depth), 6) if depth is not None else None,
+            "_snapshot_bid_depth": round(float(getattr(opportunity, "bid_depth", 0.0)), 6) if getattr(opportunity, "bid_depth", None) is not None else None,
+            "_snapshot_ask_depth": round(float(getattr(opportunity, "ask_depth", 0.0)), 6) if getattr(opportunity, "ask_depth", None) is not None else None,
             "_snapshot_market_up_probability": round(float(getattr(opportunity, "market_up_probability", midpoint) or midpoint), 6),
             "_snapshot_odds_change": round(odds_change, 6),
             "_snapshot_time_remaining_seconds": round(remaining, 3),
@@ -570,6 +575,9 @@ class Connectome:
                     "bid": features.get("_snapshot_bid"),
                     "ask": features.get("_snapshot_ask"),
                     "midpoint": features.get("_snapshot_midpoint"),
+                    "depth_imbalance": features.get("_snapshot_depth_imbalance"),
+                    "bid_depth": features.get("_snapshot_bid_depth"),
+                    "ask_depth": features.get("_snapshot_ask_depth"),
                 })
             except (TypeError, ValueError):
                 continue
