@@ -500,6 +500,10 @@ class TradingBot:
                     "price": point.price, "timestamp": point.timestamp,
                     "end_time": point.end_time,
                     "remaining_seconds": max(0.0, float(point.end_time) - time.time()) if point.end_time else None,
+                    "depth_imbalance": getattr(point, "depth_imbalance", None),
+                    "bid_depth": getattr(point, "bid_depth", None),
+                    "ask_depth": getattr(point, "ask_depth", None),
+                    "market_interval": getattr(point, "market_interval", "15m"),
                 }
                 for exchange, point in latest_prices.items()
                 if exchange in {"polymarket", "polymarket_1h"}
