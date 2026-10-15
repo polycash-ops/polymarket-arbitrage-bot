@@ -70,6 +70,7 @@ class OpportunityDetector:
         self.last_polymarket_change = 0.0
         self.last_polymarket_price: Optional[float] = None
         self.last_market_id: Optional[str] = None
+        self._latest_market_point: Optional[PricePoint] = None
         self.opportunities = deque(maxlen=100)
         self.callbacks = []
         self.min_price_diff = float(config.get("min_price_difference", 0.03))
@@ -87,6 +88,7 @@ class OpportunityDetector:
         history.add_price(price_point.price, price_point.timestamp)
 
         if exchange == "polymarket":
+            self._latest_market_point = price_point
             market_changed = price_point.market_id != self.last_market_id
             price_changed = (
                 self.last_polymarket_price is None
