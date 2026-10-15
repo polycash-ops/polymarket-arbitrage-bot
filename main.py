@@ -172,7 +172,7 @@ class TradingBot:
         logger.info(
             "CONNECTOME_SCAN market=%s checkpoint=%s remaining=%.1fs midpoint=%.4f "
             "odds_change_10s=%.4f btc_move_pct=%.4f direction=%s raw_score=%.3f "
-            "raw_score=%.3f decision_confidence=%.3f decision_up_p=%.3f decision_samples=%d "
+            "decision_confidence=%.3f decision_up_p=%.3f decision_samples=%d "
             "research_confidence=%.3f research_up_p=%.3f research_samples=%d paper_trade=not_required",
             market_id, checkpoint, remaining, midpoint, odds_change, abs(move), direction,
             confidence, decision["probability"], decision["up_probability"], decision["samples"],
