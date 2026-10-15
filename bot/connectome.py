@@ -399,7 +399,10 @@ class Connectome:
                 "INSERT INTO observations(event_id,market_id,observed_at,features_json) VALUES(?,?,?,?)",
                 (event_id, getattr(opportunity, "market_id", None), now, json.dumps(features, sort_keys=True)),
             )
-            node_features = {k: v for k, v in features.items() if not k.startswith("_")}
+            node_features = {
+                k: v for k, v in features.items()
+                if not k.startswith("_") and isinstance(v, (str, int, float, bool))
+            }
             node_ids = []
             for kind, signature in node_features.items():
                 node_id = _stable_id(f"{self.name}|{kind}|{signature}")
@@ -432,7 +435,10 @@ class Connectome:
         all_features = self._features(opportunity, role)
         # Private audit fields (including checkpoint-label lists and raw floats)
         # are not categorical graph signatures and must never reach SQL lookups.
-        features = {key: value for key, value in all_features.items() if not key.startswith("_")}
+        features = {
+            key: value for key, value in all_features.items()
+            if not key.startswith("_") and isinstance(value, (str, int, float, bool))
+        }
         node_probabilities = []
         node_up_probabilities = []
         evidence_nodes = 0
