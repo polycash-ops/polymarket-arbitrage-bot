@@ -23,11 +23,11 @@ connectomes:
   decision:
     max_nodes: 1000000
     max_edges: 1000000
-    min_samples_for_gate: 20
+    min_samples_for_gate: 1
     min_learned_probability: 0.50
     learning_rate: 0.03
   research:
     max_nodes: 1000000
     max_edges: 1000000
-    min_samples_for_gate: 20
+    min_samples_for_gate: 1
     learning_rate: 0.03
