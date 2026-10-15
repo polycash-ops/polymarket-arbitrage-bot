@@ -128,24 +128,32 @@ class TradingBot:
         
         self.stats['opportunities_detected'] += 1
         
-        # Enhance opportunity with AI analysis
-        enhanced_confidence = await self.ai_analyzer.analyze_opportunity(opportunity)
-        opportunity.confidence = enhanced_confidence
-        
-        # Execute if still meets criteria
-        if opportunity.confidence >= self.config.get('opportunity_detection', {}).get('min_confidence', 0.7):
+        # The bundled AI analyzer is a mock, not a validated model. Do not let its
+        # hard-coded response alter confidence or cause paper fills.
+        minimum = self.config.get('opportunity_detection', {}).get('min_confidence', 0.7)
+        if opportunity.confidence >= minimum:
             trade = await self.trade_executor.execute_opportunity(opportunity)
             if trade:
-                logger.info(f"✅ Trade executed: {trade.id}")
+                logger.info(
+                    "Paper position opened id=%s market=%s entry=%.4f stake=$%.2f; "
+                    "realized P/L waits for final market settlement",
+                    trade.id, trade.market_id, trade.executed_price or trade.expected_price, trade.amount
+                )
         else:
-            logger.info(f"❌ Opportunity rejected after AI analysis (confidence: {enhanced_confidence:.3f})")
+            logger.info(
+                "Opportunity rejected before execution: confidence %.3f below %.3f",
+                opportunity.confidence, minimum
+            )
             
     async def _on_trade_executed(self, trade: Trade):
         """Handle executed trades"""
-        self.stats['trades_executed'] += 1
-        
-        if trade.profit_loss:
-            self.stats['total_profit'] += trade.profit_loss
+        # This callback runs on both fill and settlement. Count fills once,
+        # and only add realized P/L after the market outcome is final.
+        if trade.executed_at is not None and not trade.resolved:
+            self.stats['trades_executed'] += 1
+
+        if trade.resolved and trade.profit_loss is not None:
+            self.stats['total_profit'] = self.trade_executor.stats.total_profit
             
         logger.info(
             f"💰 TRADE RESULT: {trade.id} - "
