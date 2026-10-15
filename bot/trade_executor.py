@@ -189,7 +189,14 @@ class TradeExecutor:
                         markets = payload if isinstance(payload, list) else []
                         market = next((m for m in markets if isinstance(m, dict) and
                                        str(m.get("slug") or m.get("id") or "") == trade.market_id), None)
-                        if not market or not market.get("closed"):
+                        if not market and trade.market_id.isdigit():
+                            async with self.session.get(url, params={"id": trade.market_id, "limit": 5}) as response:
+                                if response.status == 200:
+                                    fallback = await response.json()
+                                    if isinstance(fallback, list):
+                                        market = next((m for m in fallback if isinstance(m, dict) and
+                                                       str(m.get("id") or "") == trade.market_id), None)
+                        if not market or market.get("closed") is not True:
                             continue
                         outcomes = market.get("outcomes", [])
                         prices = market.get("outcomePrices", [])
