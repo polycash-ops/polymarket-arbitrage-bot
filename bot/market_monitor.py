@@ -112,7 +112,6 @@ class MarketMonitor:
             asyncio.create_task(self._monitor_coinbase()),
             asyncio.create_task(self._monitor_kraken()),
             asyncio.create_task(self._monitor_polymarket()),
-            asyncio.create_task(self._monitor_polymarket_hourly()),
         ]
         await asyncio.gather(*tasks, return_exceptions=True)
 
@@ -386,79 +385,6 @@ class MarketMonitor:
             except Exception as exc:
                 logger.error("Polymarket polling error: %s", exc)
                 await asyncio.sleep(5)
-
-    async def _monitor_polymarket_hourly(self):
-        """Poll the current/next hourly BTC Up/Down contract when Gamma exposes it."""
-        url = "https://gamma-api.polymarket.com/markets"
-        while self.running:
-            try:
-                if not self.session:
-                    await asyncio.sleep(1)
-                    continue
-                now = time.time()
-                now_dt = datetime.fromtimestamp(now, timezone.utc)
-                hour_start = now_dt.replace(minute=0, second=0, microsecond=0)
-                candidates = []
-                for start_at in (hour_start, hour_start + timedelta(hours=1)):
-                    epoch = int(start_at.timestamp())
-                    slugs = (
-                        f"btc-updown-1h-{epoch}",
-                        f"bitcoin-updown-1h-{epoch}",
-                        f"cpc-btc-updown-1h-{start_at:%Y-%m-%d}-{start_at:%H}z",
-                    )
-                    for slug in slugs:
-                        async with self.session.get(f"{url}/slug/{slug}", timeout=aiohttp.ClientTimeout(total=8)) as response:
-                            if response.status != 200:
-                                continue
-                            raw = await response.json()
-                        market = raw[0] if isinstance(raw, list) and raw else raw
-                        if not isinstance(market, dict) or str(market.get("slug") or "") != slug:
-                            continue
-                        raw_end = market.get("endDate") or market.get("endDateIso") or market.get("end_date")
-                        try:
-                            end_time = datetime.fromisoformat(str(raw_end).replace("Z", "+00:00")).timestamp()
-                        except (TypeError, ValueError):
-                            continue
-                        if end_time <= now:
-                            continue
-                        outcomes = self._as_list(market.get("outcomes"))
-                        prices = self._as_list(market.get("outcomePrices"))
-                        if len(outcomes) < 2 or len(prices) < 2:
-                            continue
-                        try:
-                            first_price, second_price = float(prices[0]), float(prices[1])
-                        except (TypeError, ValueError):
-                            continue
-                        first_name = str(outcomes[0]).lower()
-                        second_name = str(outcomes[1]).lower()
-                        down_first = "down" in first_name and "up" in second_name
-                        up_price = second_price if down_first else first_price
-                        try:
-                            raw_bid = float(market["bestBid"]) if market.get("bestBid") is not None else None
-                            raw_ask = float(market["bestAsk"]) if market.get("bestAsk") is not None else None
-                            bid = 1.0 - raw_ask if down_first and raw_ask is not None else raw_bid
-                            ask = 1.0 - raw_bid if down_first and raw_bid is not None else raw_ask
-                        except (TypeError, ValueError):
-                            bid = ask = None
-                        if bid is None or ask is None or not (0 < bid <= ask < 1):
-                            continue
-                        candidates.append((end_time, market, up_price, bid, ask))
-                if candidates:
-                    end_time, market, up_price, bid, ask = min(candidates, key=lambda item: item[0])
-                    slug = str(market.get("slug") or market.get("id") or "")
-                    point = PricePoint(
-                        exchange="polymarket_hourly", price=float(up_price), timestamp=now,
-                        volume=float(market.get("volume") or 0), bid=bid, ask=ask,
-                        market_id=slug, question=str(market.get("question") or "BTC Up or Down 1h"),
-                        end_time=end_time,
-                        yes_outcome_index=1 if "down" in str(self._as_list(market.get("outcomes"))[0]).lower() else 0,
-                    )
-                    self.prices["polymarket_hourly"] = point
-                    await self._notify_callbacks("polymarket_hourly", point)
-                await asyncio.sleep(5)
-            except Exception as exc:
-                logger.warning("Polymarket hourly polling error: %s", exc)
-                await asyncio.sleep(10)
 
     async def _notify_callbacks(self, exchange: str, price_point: PricePoint):
         """Notify all price-update callbacks."""
