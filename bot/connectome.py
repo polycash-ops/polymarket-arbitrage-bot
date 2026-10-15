@@ -695,6 +695,22 @@ class Connectome:
             nodes = con.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
             edges = con.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
             observations = con.execute("SELECT COUNT(*) FROM observations").fetchone()[0]
+            now = time.time()
+            last_observation_at = con.execute("SELECT MAX(observed_at) FROM observations").fetchone()[0]
+            observations_last_15m = con.execute(
+                "SELECT COUNT(*) FROM observations WHERE observed_at>=?", (now - 900.0,)
+            ).fetchone()[0]
+            nodes_touched_last_15m = con.execute(
+                "SELECT COUNT(*) FROM nodes WHERE updated_at>=?", (now - 900.0,)
+            ).fetchone()[0]
+            edges_touched_last_15m = con.execute(
+                "SELECT COUNT(*) FROM edges WHERE updated_at>=?", (now - 900.0,)
+            ).fetchone()[0]
+            total_node_visits = con.execute("SELECT COALESCE(SUM(visits),0) FROM nodes").fetchone()[0]
+            total_edge_traversals = con.execute("SELECT COALESCE(SUM(updates),0) FROM edges").fetchone()[0]
+            learned_edge_updates = con.execute(
+                "SELECT COALESCE(SUM(wins+losses),0) FROM edges"
+            ).fetchone()[0]
             settled = con.execute("SELECT COUNT(*) FROM observations WHERE outcome IS NOT NULL").fetchone()[0]
             wins = con.execute("SELECT COUNT(*) FROM observations WHERE outcome=1").fetchone()[0]
             losses = con.execute("SELECT COUNT(*) FROM observations WHERE outcome=0").fetchone()[0]
@@ -808,6 +824,14 @@ class Connectome:
                 "nodes_active": int(nodes),
                 "edges_active": int(edges),
                 "observations": int(observations),
+                "last_observation_at": float(last_observation_at) if last_observation_at is not None else None,
+                "last_observation_age_seconds": round(max(0.0, now - float(last_observation_at)), 3) if last_observation_at is not None else None,
+                "observations_last_15m": int(observations_last_15m),
+                "nodes_touched_last_15m": int(nodes_touched_last_15m),
+                "edges_touched_last_15m": int(edges_touched_last_15m),
+                "total_node_visits": int(total_node_visits),
+                "total_edge_traversals": int(total_edge_traversals),
+                "learned_edge_updates": int(learned_edge_updates),
                 "settled_observations": int(settled),
                 "wins": int(wins),
                 "losses": int(losses),
