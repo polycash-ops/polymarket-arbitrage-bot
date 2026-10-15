@@ -143,6 +143,10 @@ class Connectome:
         confidence_bucket = "low" if confidence < 0.7 else "mid" if confidence < 0.85 else "high"
         spread_bucket = "unknown" if quote_spread is None else "tight" if quote_spread <= 0.03 else "wide"
         checkpoint = str(getattr(opportunity, "checkpoint", "unknown"))
+        checkpoint_labels = getattr(opportunity, "checkpoint_labels", None) or [checkpoint]
+        checkpoint_labels = sorted({str(label) for label in checkpoint_labels if label})
+        if checkpoint not in checkpoint_labels:
+            checkpoint_labels.insert(0, checkpoint)
         remaining = float(getattr(opportunity, "time_remaining", 0.0) or 0.0)
         midpoint = float(getattr(opportunity, "midpoint", 0.5) or 0.5)
         depth = getattr(opportunity, "depth_imbalance", None)
@@ -290,6 +294,7 @@ class Connectome:
         # Apply the finer market-state vocabulary to both independent graphs.
         # Shared feature definitions do not share learned weights or outcomes.
         base.update({
+            "_checkpoint_labels": checkpoint_labels,
             "remaining_fine": remaining_fine,
             "midpoint_fine": midpoint_fine,
             "odds_change_magnitude": odds_change_bucket,
@@ -559,16 +564,18 @@ class Connectome:
             ).fetchall()
             for row in all_checkpoint_rows:
                 features = json.loads(row["features_json"])
-                checkpoint = str(features.get("checkpoint", "trade_signal"))
-                item = checkpoint_counts.setdefault(
-                    checkpoint, {"observations": 0, "pending": 0, "wins": 0, "losses": 0, "settled": 0}
-                )
-                item["observations"] += 1
-                if row["outcome"] is None:
-                    item["pending"] += 1
-                else:
-                    item["settled"] += 1
-                    item["wins" if int(row["outcome"]) == 1 else "losses"] += 1
+                primary = str(features.get("checkpoint", "trade_signal"))
+                labels = features.get("_checkpoint_labels") or [primary]
+                for checkpoint in set(str(label) for label in labels if label) | {primary}:
+                    item = checkpoint_counts.setdefault(
+                        checkpoint, {"observations": 0, "pending": 0, "wins": 0, "losses": 0, "settled": 0}
+                    )
+                    item["observations"] += 1
+                    if row["outcome"] is None:
+                        item["pending"] += 1
+                    else:
+                        item["settled"] += 1
+                        item["wins" if int(row["outcome"]) == 1 else "losses"] += 1
             brier_total = 0.0
             brier_n = 0
             directional_brier_total = 0.0
@@ -580,42 +587,49 @@ class Connectome:
             for row in rows:
                 features = json.loads(row["features_json"])
                 label = int(row["outcome"])
-                bucket = checkpoint_counts[str(features.get("checkpoint", "trade_signal"))]
+                primary = str(features.get("checkpoint", "trade_signal"))
+                labels = set(str(value) for value in (features.get("_checkpoint_labels") or [primary]) if value)
+                labels.add(primary)
+                buckets = [checkpoint_counts[key] for key in labels if key in checkpoint_counts]
                 forecast = features.get("_forecast_probability")
                 if forecast is not None:
                     score = (float(forecast) - label) ** 2
-                    bucket.setdefault("directional_brier_sum", 0.0)
-                    bucket.setdefault("directional_brier_n", 0)
-                    bucket["directional_brier_sum"] += score
-                    bucket["directional_brier_n"] += 1
+                    for bucket in buckets:
+                        bucket.setdefault("directional_brier_sum", 0.0)
+                        bucket.setdefault("directional_brier_n", 0)
+                        bucket["directional_brier_sum"] += score
+                        bucket["directional_brier_n"] += 1
                     directional_brier_total += score
                     directional_brier_n += 1
                 forecast_up = features.get("_forecast_up_probability")
                 actual_up = row["actual_up"]
                 if forecast_up is not None and actual_up is not None:
                     up_score = (float(forecast_up) - int(actual_up)) ** 2
-                    bucket.setdefault("brier_sum", 0.0)
-                    bucket.setdefault("brier_n", 0)
-                    bucket["brier_sum"] += up_score
-                    bucket["brier_n"] += 1
+                    for bucket in buckets:
+                        bucket.setdefault("brier_sum", 0.0)
+                        bucket.setdefault("brier_n", 0)
+                        bucket["brier_sum"] += up_score
+                        bucket["brier_n"] += 1
                     brier_total += up_score
                     brier_n += 1
                 market_prior = features.get("_snapshot_market_up_probability")
                 if market_prior is not None and actual_up is not None:
                     market_score = (float(market_prior) - int(actual_up)) ** 2
-                    bucket.setdefault("market_brier_sum", 0.0)
-                    bucket.setdefault("market_brier_n", 0)
-                    bucket["market_brier_sum"] += market_score
-                    bucket["market_brier_n"] += 1
+                    for bucket in buckets:
+                        bucket.setdefault("market_brier_sum", 0.0)
+                        bucket.setdefault("market_brier_n", 0)
+                        bucket["market_brier_sum"] += market_score
+                        bucket["market_brier_n"] += 1
                     market_brier_total += market_score
                     market_brier_n += 1
                 raw_confidence = features.get("_raw_scan_confidence")
                 if raw_confidence is not None:
                     raw_score = (float(raw_confidence) - label) ** 2
-                    bucket.setdefault("raw_brier_sum", 0.0)
-                    bucket.setdefault("raw_brier_n", 0)
-                    bucket["raw_brier_sum"] += raw_score
-                    bucket["raw_brier_n"] += 1
+                    for bucket in buckets:
+                        bucket.setdefault("raw_brier_sum", 0.0)
+                        bucket.setdefault("raw_brier_n", 0)
+                        bucket["raw_brier_sum"] += raw_score
+                        bucket["raw_brier_n"] += 1
                     raw_brier_total += raw_score
                     raw_brier_n += 1
             for item in checkpoint_counts.values():
