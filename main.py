@@ -148,6 +148,10 @@ class TradingBot:
                 btc_consensus_move=float(move or 0.0), agreeing_exchange_count=len(exchanges),
                 prediction_source=prediction_source,
                 exchange_moved=",".join(exchanges) if exchanges else "none",
+                agreeing_exchange_count=len(exchanges),
+                prediction_source="btc_consensus" if move is not None and len(exchanges) >= 2 else "market_midpoint",
+                market_probability_change=(self.opportunity_detector.price_history.get("polymarket").get_probability_change(10)
+                    if self.opportunity_detector.price_history.get("polymarket") else 0.0),
                 polymarket_delay=max(0.0, now - self.opportunity_detector.last_polymarket_change),
                 price_difference=move_abs, confidence=confidence, direction=direction,
                 recommended_action="buy_yes" if direction == "up" else "buy_no",
