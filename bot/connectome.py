@@ -737,6 +737,12 @@ class Connectome:
             edges_touched_last_15m = con.execute(
                 "SELECT COUNT(*) FROM edges WHERE updated_at>=?", (now - 900.0,)
             ).fetchone()[0]
+            new_nodes_last_15m = con.execute(
+                "SELECT COUNT(*) FROM nodes WHERE created_at>=?", (now - 900.0,)
+            ).fetchone()[0]
+            new_edges_last_15m = con.execute(
+                "SELECT COUNT(*) FROM edges WHERE created_at>=?", (now - 900.0,)
+            ).fetchone()[0]
             total_node_visits = con.execute("SELECT COALESCE(SUM(visits),0) FROM nodes").fetchone()[0]
             total_edge_traversals = con.execute("SELECT COALESCE(SUM(traversals),0) FROM edges").fetchone()[0]
             learned_edge_updates = con.execute(
@@ -860,6 +866,8 @@ class Connectome:
                 "observations_last_15m": int(observations_last_15m),
                 "nodes_touched_last_15m": int(nodes_touched_last_15m),
                 "edges_touched_last_15m": int(edges_touched_last_15m),
+                "new_nodes_last_15m": int(new_nodes_last_15m),
+                "new_edges_last_15m": int(new_edges_last_15m),
                 "total_node_visits": int(total_node_visits),
                 "total_edge_traversals": int(total_edge_traversals),
                 "learned_edge_updates": int(learned_edge_updates),
