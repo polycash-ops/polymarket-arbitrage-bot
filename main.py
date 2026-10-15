@@ -113,30 +113,40 @@ class TradingBot:
         if not (0 < remaining <= 900):
             return
         market_id = str(point.market_id)
-        # Reload checkpoint history from each graph's durable observation store so
-        # worker restarts do not make an already-recorded checkpoint look new.
-        seen = self.scan_checkpoints_seen.setdefault(market_id, set())
-        seen.update(self.decision_connectome.observed_checkpoints(market_id))
-        seen.update(self.research_connectome.observed_checkpoints(market_id))
+        # Load persisted checkpoint history once per market per worker process.
+        # The SQLite observation rows remain the source of truth after restarts.
+        if market_id not in self.scan_checkpoints_seen:
+            seen = self.decision_connectome.observed_checkpoints(market_id)
+            seen.update(self.research_connectome.observed_checkpoints(market_id))
+            self.scan_checkpoints_seen[market_id] = seen
+        seen = self.scan_checkpoints_seen[market_id]
         previous_snapshot = self.last_connectome_snapshot_at.get(market_id, 0.0)
         previous_remaining = self.last_connectome_remaining.get(market_id, remaining)
-        checkpoints = []
+        checkpoint_candidates = []
         if "first_seen" not in seen:
-            checkpoints.append("first_seen")
-        # Use both threshold crossings and a small absolute-time window. This
-        # tolerates scan jitter without fabricating a checkpoint long after it passed.
+            checkpoint_candidates.append(("first_seen", remaining))
+        # Use both threshold crossings and a small absolute-time window. If a
+        # scan gap crosses multiple thresholds, record only the closest checkpoint
+        # to this observation; do not mark skipped checkpoints as if captured.
         for label, seconds in (("10m", 600), ("5m", 300), ("3m", 180), ("1m", 60)):
             crossed = previous_remaining > seconds >= remaining
             inside_window = seconds - 25.0 < remaining <= seconds
             if label not in seen and (crossed or inside_window):
-                checkpoints.append(label)
+                checkpoint_candidates.append((label, abs(remaining - seconds)))
         continuous_due = now - previous_snapshot >= 10.0
         self.last_connectome_remaining[market_id] = remaining
-        if not checkpoints and not continuous_due:
+        checkpoint = None
+        if checkpoint_candidates:
+            checkpoint = min(
+                checkpoint_candidates,
+                key=lambda candidate: candidate[1] if candidate[0] != "first_seen" else float("inf"),
+            )[0]
+        if checkpoint is None and not continuous_due:
             return
-        for label in checkpoints:
-            seen.add(label)
-        checkpoint = checkpoints[-1] if checkpoints else "continuous"
+        if checkpoint is not None:
+            seen.add(checkpoint)
+        else:
+            checkpoint = "continuous"
         self.last_connectome_snapshot_at[market_id] = now
 
         # Preserve each venue as an independent signal; the graph learns which
@@ -191,7 +201,7 @@ class TradingBot:
         snapshot = SimpleNamespace(
             timestamp=now, market_id=market_id, checkpoint=checkpoint,
             time_remaining=remaining, minutes_remaining=remaining / 60.0,
-            midpoint=midpoint, market_up_probability=float(point.price),
+            midpoint=midpoint, market_up_probability=midpoint,
             depth_imbalance=None, market_probability_change=odds_change,
             btc_consensus_move=move, agreeing_exchange_count=len(exchanges),
             exchange_binance_move=exchange_moves["binance"],
