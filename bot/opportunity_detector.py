@@ -1,261 +1,236 @@
 """
-Temporal Arbitrage Opportunity Detector
-Detects when exchange prices move before Polymarket updates
-Based on 0x8dxd's proven strategy
+Temporal arbitrage detector for the forked paper-trading strategy.
+A signal requires a BTC move confirmed across exchange feeds while the selected
+15-minute Polymarket Up/Down probability has not yet followed that move.
 """
 import asyncio
-import time
-import statistics
-from typing import Dict, List, Optional, Tuple
-from dataclasses import dataclass, field
-from collections import deque
 import logging
+import statistics
+import time
+from collections import deque
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional
 
 from .market_monitor import PricePoint
 
 logger = logging.getLogger(__name__)
 
+
 @dataclass
 class Opportunity:
     timestamp: float
     exchange_moved: str
-    polymarket_delay: float  # Seconds
-    price_difference: float  # Percentage
-    confidence: float  # 0-1 score
-    direction: str  # 'up' or 'down'
-    recommended_action: str  # 'buy_yes', 'buy_no', 'wait'
+    polymarket_delay: float
+    price_difference: float
+    confidence: float
+    direction: str
+    recommended_action: str
     market_id: Optional[str] = None
     expected_profit: float = 0.0
-    risk_level: str = 'medium'
+    risk_level: str = "medium"
+    market_question: Optional[str] = None
+    yes_bid: Optional[float] = None
+    yes_ask: Optional[float] = None
+    market_end_time: Optional[float] = None
+    estimated_edge_probability: float = 0.0
 
-@dataclass 
+
+@dataclass
 class PriceHistory:
-    prices: deque = field(default_factory=lambda: deque(maxlen=60))  # Keep 60 data points
-    timestamps: deque = field(default_factory=lambda: deque(maxlen=60))
-    
+    prices: deque = field(default_factory=lambda: deque(maxlen=300))
+    timestamps: deque = field(default_factory=lambda: deque(maxlen=300))
+
     def add_price(self, price: float, timestamp: float):
-        self.prices.append(price)
-        self.timestamps.append(timestamp)
-        
-    def get_recent_trend(self, seconds: int = 30) -> str:
-        """Get trend direction for last N seconds"""
+        self.prices.append(float(price))
+        self.timestamps.append(float(timestamp))
+
+    def get_change_pct(self, seconds: int = 30) -> Optional[float]:
         if len(self.prices) < 2:
-            return 'unknown'
-            
-        cutoff_time = time.time() - seconds
-        recent_prices = []
-        
-        for i, ts in enumerate(self.timestamps):
-            if ts >= cutoff_time:
-                recent_prices.append(self.prices[i])
-                
-        if len(recent_prices) < 2:
-            return 'unknown'
-            
-        if recent_prices[-1] > recent_prices[0] * 1.001:  # >0.1% increase
-            return 'up'
-        elif recent_prices[-1] < recent_prices[0] * 0.999:  # >0.1% decrease
-            return 'down'
-        else:
-            return 'flat'
+            return None
+        cutoff = time.time() - seconds
+        recent = [(p, ts) for p, ts in zip(self.prices, self.timestamps) if ts >= cutoff]
+        if len(recent) < 2 or recent[0][0] <= 0:
+            return None
+        return (recent[-1][0] - recent[0][0]) / recent[0][0] * 100
+
+    def get_probability_change(self, seconds: int = 10) -> Optional[float]:
+        if len(self.prices) < 2:
+            return None
+        cutoff = time.time() - seconds
+        recent = [(p, ts) for p, ts in zip(self.prices, self.timestamps) if ts >= cutoff]
+        if len(recent) < 2:
+            return 0.0
+        return recent[-1][0] - recent[0][0]
+
 
 class OpportunityDetector:
     def __init__(self, config: dict):
         self.config = config
         self.price_history: Dict[str, PriceHistory] = {}
-        self.last_polymarket_update = 0
-        self.opportunities = deque(maxlen=100)  # Keep last 100 opportunities
+        self.last_polymarket_change = 0.0
+        self.last_polymarket_price: Optional[float] = None
+        self.last_market_id: Optional[str] = None
+        self.opportunities = deque(maxlen=100)
         self.callbacks = []
-        
-        # Thresholds from config
-        self.min_price_diff = config.get('min_price_difference', 0.3)  # 0.3%
-        self.min_confidence = config.get('min_confidence', 0.7)
-        self.max_delay = config.get('max_delay_seconds', 15)  # 15 seconds max delay
-        
+        self.min_price_diff = float(config.get("min_price_difference", 0.03))
+        self.min_confidence = float(config.get("min_confidence", 0.7))
+        self.max_delay = float(config.get("max_delay_seconds", 15))
+        self.min_probability_lag = float(config.get("min_probability_lag", 0.01))
+        self.max_probability_followthrough = float(config.get("max_probability_followthrough", 0.01))
+        self.min_consensus_exchanges = int(config.get("min_consensus_exchanges", 2))
+
     def add_callback(self, callback):
-        """Add callback for new opportunities"""
         self.callbacks.append(callback)
-        
+
     async def on_price_update(self, exchange: str, price_point: PricePoint):
-        """Handle price updates from market monitor"""
-        
-        # Initialize price history if needed
-        if exchange not in self.price_history:
-            self.price_history[exchange] = PriceHistory()
-            
-        # Add to history
-        self.price_history[exchange].add_price(price_point.price, price_point.timestamp)
-        
-        # Special handling for Polymarket
-        if exchange == 'polymarket':
-            self.last_polymarket_update = price_point.timestamp
+        history = self.price_history.setdefault(exchange, PriceHistory())
+        history.add_price(price_point.price, price_point.timestamp)
+
+        if exchange == "polymarket":
+            market_changed = price_point.market_id != self.last_market_id
+            price_changed = (
+                self.last_polymarket_price is None
+                or abs(price_point.price - self.last_polymarket_price) >= 0.005
+            )
+            if market_changed or price_changed:
+                self.last_polymarket_change = price_point.timestamp
+                self.last_polymarket_price = price_point.price
+                self.last_market_id = price_point.market_id
             return
-            
-        # Check for temporal arbitrage opportunities
+
         await self._check_temporal_arbitrage(exchange, price_point)
-        
+
+    def _consensus_move(self) -> tuple[Optional[float], List[str]]:
+        moves = {}
+        for exchange in ("binance", "coinbase", "kraken"):
+            history = self.price_history.get(exchange)
+            if not history:
+                continue
+            change = history.get_change_pct(30)
+            if change is not None:
+                moves[exchange] = change
+        if len(moves) < self.min_consensus_exchanges:
+            return None, []
+        values = list(moves.values())
+        # Require a consistent sign across feeds; a single bad/outlier feed cannot trigger a trade.
+        positive = sum(value > 0 for value in values)
+        negative = sum(value < 0 for value in values)
+        if positive >= self.min_consensus_exchanges and positive > negative:
+            agreed = [value for value in values if value > 0]
+        elif negative >= self.min_consensus_exchanges and negative > positive:
+            agreed = [value for value in values if value < 0]
+        else:
+            return None, []
+        return statistics.median(agreed), [name for name, value in moves.items() if value in agreed]
+
     async def _check_temporal_arbitrage(self, moved_exchange: str, price_point: PricePoint):
-        """Check if price movement creates temporal arbitrage opportunity"""
-        
-        # Get trend for the exchange that just moved
-        trend = self.price_history[moved_exchange].get_recent_trend(30)
-        
-        if trend == 'unknown' or trend == 'flat':
+        market_history = self.price_history.get("polymarket")
+        if not market_history:
             return
-            
-        # Calculate time since last Polymarket update
-        polymarket_delay = time.time() - self.last_polymarket_update
-        
-        # Skip if Polymarket was updated too recently (no arbitrage opportunity)
-        if polymarket_delay < 5:
+        current_market = getattr(self, "_latest_market_point", None)
+        # The callback carries a new quote every poll; preserve the last complete market metadata.
+        # Set by on_price_update below when Polymarket snapshots arrive.
+        if current_market is None:
             return
-            
-        # Skip if delay is too long (opportunity expired)
-        if polymarket_delay > self.max_delay:
+        if not current_market.market_id:
+            logger.info("Opportunity skipped: selected Polymarket market has no ID")
             return
-            
-        # Calculate price difference vs other exchanges
-        price_differences = self._calculate_price_differences(moved_exchange)
-        
-        if not price_differences:
+        if current_market.end_time is not None and current_market.end_time <= time.time() + 5:
+            logger.info("Opportunity skipped: contract is at expiry")
             return
-            
-        max_diff = max(price_differences.values())
-        
-        # Check if difference is significant enough
-        if max_diff < self.min_price_diff:
+
+        delay = time.time() - self.last_polymarket_change
+        if delay < 5 or delay > self.max_delay:
             return
-            
-        # Calculate confidence score
-        confidence = self._calculate_confidence(
-            moved_exchange, trend, polymarket_delay, max_diff, price_differences
-        )
-        
+
+        consensus_change, agreeing_exchanges = self._consensus_move()
+        if consensus_change is None or abs(consensus_change) < self.min_price_diff:
+            return
+        direction = "up" if consensus_change > 0 else "down"
+
+        quote_change = market_history.get_probability_change(10)
+        if quote_change is None:
+            return
+        # YES is the first (Up) outcome for the selected BTC Up/Down contract.
+        # If the probability has already followed the BTC move, there is no lag to trade.
+        if direction == "up" and quote_change > self.max_probability_followthrough:
+            logger.info("Opportunity skipped: Polymarket Up probability already followed BTC")
+            return
+        if direction == "down" and quote_change < -self.max_probability_followthrough:
+            logger.info("Opportunity skipped: Polymarket Up probability already followed BTC")
+            return
+
+        yes_bid = current_market.bid
+        yes_ask = current_market.ask
+        if yes_bid is None or yes_ask is None or not (0 < yes_bid <= yes_ask < 1):
+            logger.info("Opportunity skipped: Polymarket bid/ask unavailable or invalid")
+            return
+
+        # Estimate a conservative, configurable probability edge for paper evaluation only.
+        edge = min(0.05, max(self.min_probability_lag, abs(consensus_change) * 0.5 / 100))
+        confidence = self._calculate_confidence(abs(consensus_change), delay, quote_change, len(agreeing_exchanges))
         if confidence < self.min_confidence:
+            logger.info(
+                "Opportunity rejected: confidence %.3f below %.3f",
+                confidence, self.min_confidence
+            )
             return
-            
-        # Create opportunity
+
         opportunity = Opportunity(
             timestamp=time.time(),
-            exchange_moved=moved_exchange,
-            polymarket_delay=polymarket_delay,
-            price_difference=max_diff,
+            exchange_moved=",".join(agreeing_exchanges),
+            polymarket_delay=delay,
+            price_difference=abs(consensus_change),
             confidence=confidence,
-            direction=trend,
-            recommended_action=self._get_recommended_action(trend, confidence),
-            expected_profit=self._estimate_profit(max_diff, confidence),
-            risk_level=self._assess_risk(confidence, polymarket_delay)
+            direction=direction,
+            recommended_action="buy_yes" if direction == "up" else "buy_no",
+            market_id=current_market.market_id,
+            expected_profit=edge * 100 * confidence,
+            risk_level=self._assess_risk(confidence, delay),
+            market_question=current_market.question,
+            yes_bid=yes_bid,
+            yes_ask=yes_ask,
+            market_end_time=current_market.end_time,
+            estimated_edge_probability=edge,
         )
-        
-        # Log opportunity
         logger.info(
-            f"🎯 OPPORTUNITY DETECTED: {moved_exchange} moved {trend} "
-            f"{max_diff:.2f}%, Polymarket delay {polymarket_delay:.1f}s, "
-            f"confidence {confidence:.2f}, action: {opportunity.recommended_action}"
+            "OPPORTUNITY DETECTED market=%s direction=%s btc_move=%.4f%% "
+            "quote_lag=%.4f probability_points delay=%.1fs confidence=%.3f action=%s",
+            opportunity.market_id, direction, abs(consensus_change), quote_change,
+            delay, confidence, opportunity.recommended_action
         )
-        
-        # Store and notify
         self.opportunities.append(opportunity)
         await self._notify_callbacks(opportunity)
-        
-    def _calculate_price_differences(self, reference_exchange: str) -> Dict[str, float]:
-        """Calculate price differences between reference exchange and others"""
-        if reference_exchange not in self.price_history:
-            return {}
-            
-        ref_prices = self.price_history[reference_exchange].prices
-        if not ref_prices:
-            return {}
-            
-        ref_price = ref_prices[-1]  # Latest price
-        differences = {}
-        
-        # Compare with other exchanges
-        for exchange, history in self.price_history.items():
-            if exchange == reference_exchange or exchange == 'polymarket':
-                continue
-                
-            if not history.prices:
-                continue
-                
-            other_price = history.prices[-1]
-            diff_pct = abs(ref_price - other_price) / other_price * 100
-            differences[exchange] = diff_pct
-            
-        return differences
-        
-    def _calculate_confidence(self, moved_exchange: str, trend: str, delay: float, 
-                            max_diff: float, price_differences: Dict[str, float]) -> float:
-        """Calculate confidence score for the opportunity"""
-        confidence = 0.0
-        
-        # Base confidence from price difference (0-0.4)
-        confidence += min(max_diff / 2.0, 0.4)
-        
-        # Bonus for delay timing (0-0.3)
-        ideal_delay = 8  # 8 seconds is ideal
-        delay_score = max(0, 1 - abs(delay - ideal_delay) / ideal_delay)
-        confidence += delay_score * 0.3
-        
-        # Bonus for trend strength (0-0.2)
-        recent_prices = self.price_history[moved_exchange].prices
-        if len(recent_prices) >= 3:
-            trend_strength = abs(recent_prices[-1] - recent_prices[-3]) / recent_prices[-3]
-            confidence += min(trend_strength * 100, 0.2)
-            
-        # Bonus for consistent differences across exchanges (0-0.1)
-        if price_differences:
-            consistency = 1 - (statistics.stdev(price_differences.values()) / max(price_differences.values()))
-            confidence += consistency * 0.1
-            
-        return min(confidence, 1.0)
-        
-    def _get_recommended_action(self, trend: str, confidence: float) -> str:
-        """Get recommended trading action"""
-        if confidence < 0.7:
-            return 'wait'
-            
-        if trend == 'up':
-            return 'buy_yes'  # Buy YES tokens (price will go up)
-        elif trend == 'down':
-            return 'buy_no'   # Buy NO tokens (price will go down)
-        else:
-            return 'wait'
-            
-    def _estimate_profit(self, price_diff: float, confidence: float) -> float:
-        """Estimate expected profit percentage"""
-        # Conservative estimate: capture 30% of price difference, weighted by confidence
-        return price_diff * 0.3 * confidence
-        
+
+    def _calculate_confidence(self, btc_move_pct: float, delay: float,
+                              quote_change: float, agreeing_exchanges: int) -> float:
+        move_score = min(btc_move_pct / max(self.min_price_diff * 3, 0.001), 1.0) * 0.4
+        ideal_delay = min(8.0, self.max_delay)
+        delay_score = max(0.0, 1.0 - abs(delay - ideal_delay) / max(ideal_delay, 1.0)) * 0.25
+        lag_score = (1.0 - min(abs(quote_change) / max(self.max_probability_followthrough, 0.005), 1.0)) * 0.2
+        consensus_score = min(agreeing_exchanges / 3.0, 1.0) * 0.15
+        return min(move_score + delay_score + lag_score + consensus_score, 1.0)
+
     def _assess_risk(self, confidence: float, delay: float) -> str:
-        """Assess risk level of the opportunity"""
-        if confidence > 0.8 and delay < 10:
-            return 'low'
-        elif confidence > 0.6 and delay < 12:
-            return 'medium'
-        else:
-            return 'high'
-            
+        if confidence >= 0.85 and delay <= 10:
+            return "low"
+        if confidence >= 0.7 and delay <= self.max_delay:
+            return "medium"
+        return "high"
+
     async def _notify_callbacks(self, opportunity: Opportunity):
-        """Notify all callbacks about new opportunity"""
         for callback in self.callbacks:
             try:
                 await callback(opportunity)
-            except Exception as e:
-                logger.error(f"❌ Opportunity callback error: {e}")
-                
+            except Exception:
+                logger.exception("Opportunity callback error")
+
     def get_recent_opportunities(self, minutes: int = 60) -> List[Opportunity]:
-        """Get opportunities from last N minutes"""
-        cutoff_time = time.time() - (minutes * 60)
-        return [opp for opp in self.opportunities if opp.timestamp >= cutoff_time]
-        
+        cutoff = time.time() - minutes * 60
+        return [opp for opp in self.opportunities if opp.timestamp >= cutoff]
+
     def get_success_rate(self) -> float:
-        """Calculate success rate of recent opportunities"""
-        recent_opps = self.get_recent_opportunities(240)  # 4 hours
-        if not recent_opps:
+        recent = self.get_recent_opportunities(240)
+        if not recent:
             return 0.0
-            
-        # This would need trade results to calculate actual success rate
-        # For now, return estimated success rate based on confidence
-        avg_confidence = sum(opp.confidence for opp in recent_opps) / len(recent_opps)
-        return avg_confidence * 0.85  # Conservative estimate
+        return sum(opp.confidence for opp in recent) / len(recent) * 0.85
