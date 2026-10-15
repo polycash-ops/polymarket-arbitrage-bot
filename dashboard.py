@@ -111,7 +111,7 @@ h1{font-size:clamp(1.5rem,4vw,2.2rem);line-height:1.15;margin:0 0 8px;letter-spa
 </section>
 <section class="section panel">
   <div class="panel-inner section-head"><h2>Recent paper trades</h2><span class="small" id="tradeSummary">0 recorded</span></div>
-  <div class="table-wrap"><table><thead><tr><th>Trade</th><th>Action</th><th>Direction</th><th>Amount</th><th>Status</th><th>P/L</th><th>Confidence</th></tr></thead><tbody id="tradeRows"><tr><td class="empty" colspan="7">No paper trades recorded yet.</td></tr></tbody></table></div>
+  <div class="table-wrap"><table><thead><tr><th>Trade</th><th>Action</th><th>Direction</th><th>Amount</th><th>Status</th><th>P/L</th><th>Signal score</th></tr></thead><tbody id="tradeRows"><tr><td class="empty" colspan="7">No paper trades recorded yet.</td></tr></tbody></table></div>
 </section>
 <p class="foot">This dashboard reports the forked strategy's paper simulation. Market spreads are observations, not guaranteed executable arbitrage profits. Live execution remains disabled.</p>
 </main>
