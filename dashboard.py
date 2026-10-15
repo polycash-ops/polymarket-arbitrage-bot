@@ -118,11 +118,11 @@ function paintConnectomes(graphs){
  put("decisionLearning",fmt(d.settled_observations)+" settled · "+rate(d));
  put("researchNodes",fmt(r.nodes_active)+" / "+fmt(r.node_capacity));put("researchEdges",fmt(r.edges_active)+" / "+fmt(r.edge_capacity));
  put("researchLearning",fmt(r.settled_observations)+" settled · "+rate(r));
- const checkpointLine=g=>Object.entries(g.checkpoint_performance||{}).filter(([k,v])=>["first_seen","10m","5m","3m","1m"].includes(k)).map(([k,v])=>k+": "+fmt(v.settled)+" settled, "+(num(v.win_rate)===null?"—":pct(v.win_rate))+" accuracy"+(num(v.brier_score)===null?"":" · Brier "+Number(v.brier_score).toFixed(3))).join(" · ")||"Awaiting settled contracts";
+ const checkpointLine=g=>["first_seen","10m","5m","3m","1m","continuous"].map(k=>[k,(g.checkpoint_performance||{})[k]]).filter(([k,v])=>v&&num(v.observations)>0).map(([k,v])=>k+": "+fmt(v.observations)+" observed · "+fmt(v.pending)+" pending · "+fmt(v.settled)+" settled"+(num(v.win_rate)===null?"":" · "+pct(v.win_rate)+" accuracy")+(num(v.brier_score)===null?"":" · Brier "+Number(v.brier_score).toFixed(3))).join(" · ")||"No checkpoint snapshots recorded yet";
  put("decisionCheckpoints",checkpointLine(d));put("researchCheckpoints",checkpointLine(r));
  put("decisionBestCheckpoint",d.recommended_checkpoint||"Awaiting settled snapshots");
  put("researchBestCheckpoint",r.recommended_checkpoint||"Awaiting settled snapshots");
- put("connectomeSummary","Accuracy uses every settled internal snapshot; internal reference trades are not shown");
+ put("connectomeSummary","Checkpoint exploration shows recorded, pending, and settled snapshots separately. Accuracy uses settled snapshots only; internal reference trades are not shown");
 }
 function tradeTimestamp(t){
  const raw=num(t.executed_at??t.timestamp??t.created_at);
