@@ -58,6 +58,7 @@ class Connectome:
                     losses INTEGER NOT NULL DEFAULT 0,
                     up_count INTEGER NOT NULL DEFAULT 0,
                     down_count INTEGER NOT NULL DEFAULT 0,
+                    created_at REAL NOT NULL DEFAULT 0,
                     updated_at REAL NOT NULL
                 );
                 CREATE UNIQUE INDEX IF NOT EXISTS nodes_kind_signature
@@ -68,8 +69,11 @@ class Connectome:
                     target_id TEXT NOT NULL,
                     weight REAL NOT NULL DEFAULT 0.0,
                     updates INTEGER NOT NULL DEFAULT 0,
+                    traversals INTEGER NOT NULL DEFAULT 0,
+                    weight_updates INTEGER NOT NULL DEFAULT 0,
                     wins INTEGER NOT NULL DEFAULT 0,
                     losses INTEGER NOT NULL DEFAULT 0,
+                    created_at REAL NOT NULL DEFAULT 0,
                     updated_at REAL NOT NULL,
                     UNIQUE(source_id, target_id)
                 );
@@ -90,6 +94,20 @@ class Connectome:
                 );
             """)
             node_columns = {row["name"] for row in con.execute("PRAGMA table_info(nodes)").fetchall()}
+            if "created_at" not in node_columns:
+                con.execute("ALTER TABLE nodes ADD COLUMN created_at REAL NOT NULL DEFAULT 0")
+            con.execute("UPDATE nodes SET created_at=updated_at WHERE created_at=0")
+            edge_columns = {row["name"] for row in con.execute("PRAGMA table_info(edges)").fetchall()}
+            if "traversals" not in edge_columns:
+                con.execute("ALTER TABLE edges ADD COLUMN traversals INTEGER NOT NULL DEFAULT 0")
+            if "weight_updates" not in edge_columns:
+                con.execute("ALTER TABLE edges ADD COLUMN weight_updates INTEGER NOT NULL DEFAULT 0")
+            if "created_at" not in edge_columns:
+                con.execute("ALTER TABLE edges ADD COLUMN created_at REAL NOT NULL DEFAULT 0")
+            con.execute("UPDATE edges SET created_at=updated_at WHERE created_at=0")
+            # Legacy updates mixed graph visits with outcome learning. Reconstruct
+            # learning-update counts only from verified edge outcome counters.
+            con.execute("UPDATE edges SET weight_updates=wins+losses WHERE weight_updates=0 AND (wins+losses)>0")
             if "up_count" not in node_columns:
                 con.execute("ALTER TABLE nodes ADD COLUMN up_count INTEGER NOT NULL DEFAULT 0")
             if "down_count" not in node_columns:
@@ -372,6 +390,23 @@ class Connectome:
         })
         # Preserve exact values in each observation row for audit and calibration,
         # while the graph itself learns only from the bounded categorical signatures.
+        # Composite state signatures grow with observed regimes and refresh changes,
+        # without generating a new node merely because a timestamp changed.
+        state_keys = (
+            "market_horizon", "contract_phase", "remaining_fine", "midpoint_regime",
+            "midpoint_fine", "midpoint", "bid_ask_spread", "spread_fine",
+            "bid_refresh_move", "ask_refresh_move", "midpoint_refresh_move",
+            "bid_15m_move", "ask_15m_move", "midpoint_15m_move",
+            "bid_1h_move", "ask_1h_move", "midpoint_1h_move",
+            "depth_15m", "depth_1h", "depth", "odds_momentum",
+            "exchange_relationship", "btc_consensus", "consensus",
+            "binance_signal", "coinbase_signal", "kraken_signal",
+            "checkpoint", "direction",
+        )
+        base["snapshot_state"] = json.dumps(
+            {key: base[key] for key in state_keys if key in base and not key.startswith("_")},
+            sort_keys=True, separators=(",", ":"),
+        )
         base.update({
             "_raw_scan_confidence": round(min(0.999, max(0.001, confidence)), 6),
             "_snapshot_midpoint": round(midpoint, 6),
@@ -438,8 +473,8 @@ class Connectome:
                     if count >= self.max_nodes:
                         continue
                     con.execute(
-                        "INSERT INTO nodes(node_id,kind,signature,updated_at) VALUES(?,?,?,?)",
-                        (node_id, kind, signature, now),
+                        "INSERT INTO nodes(node_id,kind,signature,created_at,updated_at) VALUES(?,?,?,?,?)",
+                        (node_id, kind, signature, now, now),
                     )
                 con.execute("UPDATE nodes SET visits=visits+1,updated_at=? WHERE node_id=?", (now, node_id))
                 node_ids[kind] = node_id
@@ -462,15 +497,15 @@ class Connectome:
                 edge_id = _stable_id(f"{self.name}|{source}|{target}")
                 exists = con.execute("SELECT 1 FROM edges WHERE edge_id=?", (edge_id,)).fetchone()
                 if exists:
-                    con.execute("UPDATE edges SET updates=updates+1,updated_at=? WHERE edge_id=?", (now, edge_id))
+                    con.execute("UPDATE edges SET traversals=traversals+1,updated_at=? WHERE edge_id=?", (now, edge_id))
                     updated_edges += 1
                     continue
                 count = con.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
                 if count >= self.max_edges:
                     continue
                 con.execute(
-                    "INSERT INTO edges(edge_id,source_id,target_id,weight,updated_at) VALUES(?,?,?,?,?)",
-                    (edge_id, source, target, 0.0, now),
+                    "INSERT INTO edges(edge_id,source_id,target_id,weight,traversals,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
+                    (edge_id, source, target, 0.0, 1, now, now),
                 )
                 new_edges += 1
             logger.info(
@@ -525,11 +560,11 @@ class Connectome:
                 b = con.execute("SELECT node_id FROM nodes WHERE kind=? AND signature=?", (kind_b, sig_b)).fetchone()
                 if a and b:
                     edge = con.execute(
-                        "SELECT weight,updates FROM edges WHERE source_id=? AND target_id=?",
+                        "SELECT weight,weight_updates FROM edges WHERE source_id=? AND target_id=?",
                         (a["node_id"], b["node_id"]),
                     ).fetchone()
-                    if edge and int(edge["updates"]) > 0:
-                        weight = min(1.0, float(edge["updates"]) / 20.0)
+                    if edge and int(edge["weight_updates"]) > 0:
+                        weight = min(1.0, float(edge["weight_updates"]) / 20.0)
                         weighted_sum += (float(edge["weight"]) + 1.0) / 2.0 * weight
                         weight_total += weight
         # Directional correctness and Up/Down outcome probabilities are separate targets.
@@ -593,7 +628,7 @@ class Connectome:
                 target_weight = 1.0 if outcome else -1.0
                 new_weight = old_weight + self.learning_rate * (target_weight - old_weight)
                 con.execute(
-                    "UPDATE edges SET weight=?,updates=updates+1,wins=wins+?,losses=losses+?,updated_at=? WHERE edge_id=?",
+                    "UPDATE edges SET weight=?,weight_updates=weight_updates+1,wins=wins+?,losses=losses+?,updated_at=? WHERE edge_id=?",
                     (new_weight, outcome, 1 - outcome, now, edge["edge_id"]),
                 )
         logger.info("CONNECTOME_LEARNING graph=%s event=%s outcome=%s", self.name, event_id, outcome)
