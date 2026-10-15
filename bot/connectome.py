@@ -496,6 +496,23 @@ class Connectome:
                         self.name, market_id, settled, actual_up)
         return settled
 
+    def observed_checkpoints(self, market_id: str) -> set[str]:
+        """Return checkpoint labels already persisted for this contract."""
+        with self._connect() as con:
+            rows = con.execute(
+                "SELECT DISTINCT features_json FROM observations WHERE market_id=?",
+                (market_id,),
+            ).fetchall()
+        labels = set()
+        for row in rows:
+            try:
+                label = json.loads(row["features_json"]).get("checkpoint")
+                if label:
+                    labels.add(str(label))
+            except (TypeError, ValueError):
+                continue
+        return labels
+
     def pending_markets(self) -> list[str]:
         """Markets with scan forecasts awaiting an authoritative final outcome."""
         with self._connect() as con:
