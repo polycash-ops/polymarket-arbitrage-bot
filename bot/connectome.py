@@ -111,6 +111,11 @@ class Connectome:
         remaining = float(getattr(opportunity, "time_remaining", 0.0) or 0.0)
         midpoint = float(getattr(opportunity, "midpoint", 0.5) or 0.5)
         depth = getattr(opportunity, "depth_imbalance", None)
+        odds_change = float(getattr(opportunity, "market_probability_change", 0.0) or 0.0)
+        odds_momentum = "rising" if odds_change > 0.005 else "falling" if odds_change < -0.005 else "flat"
+        source = str(getattr(opportunity, "prediction_source", "btc_consensus") or "btc_consensus")
+        agreeing_count = int(getattr(opportunity, "agreeing_exchange_count", 0) or 0)
+        consensus_bucket = "none" if agreeing_count == 0 else "two" if agreeing_count == 2 else "three_plus"
         remaining_bucket = "early" if remaining > 600 else "mid" if remaining > 300 else "late" if remaining > 60 else "expiry"
         midpoint_bucket = "low" if midpoint < 0.35 else "lean_down" if midpoint < 0.48 else "balanced" if midpoint <= 0.52 else "lean_up" if midpoint <= 0.65 else "high"
         depth_bucket = "unknown" if depth is None else "sell_heavy" if float(depth) < -0.2 else "balanced" if float(depth) <= 0.2 else "buy_heavy"
@@ -119,6 +124,9 @@ class Connectome:
             "remaining": remaining_bucket,
             "midpoint": midpoint_bucket,
             "depth": depth_bucket,
+            "odds_momentum": odds_momentum,
+            "prediction_source": source,
+            "consensus": consensus_bucket,
             "direction": direction,
             "action": action,
             "move": move_bucket,
@@ -128,13 +136,14 @@ class Connectome:
             "spread": spread_bucket,
         }
         if role == "research":
-            # Research has a separate representation and independently learned graph.
+            # Research independently combines time, odds, momentum and exchange agreement.
             base = {
                 "checkpoint_midpoint": f"{checkpoint}:{midpoint_bucket}",
                 "remaining_depth": f"{remaining_bucket}:{depth_bucket}",
                 "direction_move": f"{direction}:{move_bucket}",
+                "odds_momentum_source": f"{odds_momentum}:{source}",
                 "delay_spread": f"{delay_bucket}:{spread_bucket}",
-                "confidence": confidence_bucket,
+                "consensus_confidence": f"{consensus_bucket}:{confidence_bucket}",
                 "exchange_consensus": exchanges,
                 "action": action,
             }
@@ -146,13 +155,20 @@ class Connectome:
         if not event_id:
             event_id = f"{getattr(opportunity, 'market_id', '')}:{int(float(getattr(opportunity, 'timestamp', time.time())) * 1000)}"
         now = time.time()
+        forecast_probability = getattr(opportunity, "_connectome_forecast_probability", None)
+        if forecast_probability is not None:
+            features["_forecast_probability"] = min(0.999, max(0.001, float(forecast_probability)))
         with self._connect() as con:
+            # Same contract/checkpoint rescans are idempotent and cannot inflate graph visits.
+            if con.execute("SELECT 1 FROM observations WHERE event_id=?", (event_id,)).fetchone():
+                return event_id
             con.execute(
-                "INSERT OR IGNORE INTO observations(event_id,market_id,observed_at,features_json) VALUES(?,?,?,?)",
+                "INSERT INTO observations(event_id,market_id,observed_at,features_json) VALUES(?,?,?,?)",
                 (event_id, getattr(opportunity, "market_id", None), now, json.dumps(features, sort_keys=True)),
             )
+            node_features = {k: v for k, v in features.items() if not k.startswith("_")}
             node_ids = []
-            for kind, signature in features.items():
+            for kind, signature in node_features.items():
                 node_id = _stable_id(f"{self.name}|{kind}|{signature}")
                 exists = con.execute("SELECT 1 FROM nodes WHERE node_id=?", (node_id,)).fetchone()
                 if not exists:
@@ -241,6 +257,8 @@ class Connectome:
                         (outcome, now, event_id))
             node_ids = []
             for kind, signature in features.items():
+                if kind.startswith("_"):
+                    continue
                 node = con.execute("SELECT node_id FROM nodes WHERE kind=? AND signature=?", (kind, signature)).fetchone()
                 if node:
                     node_id = node["node_id"]
@@ -264,8 +282,10 @@ class Connectome:
         logger.info("CONNECTOME_LEARNING graph=%s event=%s outcome=%s", self.name, event_id, outcome)
         return True
 
-    def record_scan_observation(self, opportunity: Any, role: str) -> str:
-        """Persist one checkpoint snapshot for an active 15-minute contract."""
+    def record_scan_observation(self, opportunity: Any, role: str, forecast_probability: Optional[float] = None) -> str:
+        """Persist one checkpoint snapshot and the pre-outcome forecast for later Brier scoring."""
+        if forecast_probability is not None:
+            opportunity._connectome_forecast_probability = float(forecast_probability)
         return self.record_signal(opportunity, role=role)
 
     def settle_market(self, market_id: str, actual_up: bool) -> int:
@@ -319,13 +339,36 @@ class Connectome:
                 item = checkpoint_counts.setdefault(checkpoint, {"wins": 0, "losses": 0, "settled": 0})
                 item["settled"] += 1
                 item["wins" if int(row["outcome"]) == 1 else "losses"] += 1
+            brier_total = 0.0
+            brier_n = 0
+            for row in rows:
+                features = json.loads(row["features_json"])
+                forecast = features.get("_forecast_probability")
+                if forecast is not None:
+                    score = (float(forecast) - int(row["outcome"])) ** 2
+                    bucket = checkpoint_counts[str(features.get("checkpoint", "trade_signal"))]
+                    bucket.setdefault("brier_sum", 0.0)
+                    bucket.setdefault("brier_n", 0)
+                    bucket["brier_sum"] += score
+                    bucket["brier_n"] += 1
+                    brier_total += score
+                    brier_n += 1
             for item in checkpoint_counts.values():
                 item["win_rate"] = round(item["wins"] / item["settled"], 6) if item["settled"] else None
+                item["brier_score"] = round(item.get("brier_sum", 0.0) / item["brier_n"], 6) if item.get("brier_n") else None
+                item.pop("brier_sum", None)
+                item.pop("brier_n", None)
             candidates = {
                 key: value for key, value in checkpoint_counts.items()
-                if key in {"first_seen", "10m", "5m", "3m", "1m"} and value["settled"] >= 20
+                if key in {"first_seen", "10m", "5m", "3m", "1m"} and value["settled"] >= self.min_samples_for_gate
             }
-            recommended = max(candidates, key=lambda key: (candidates[key]["win_rate"], candidates[key]["settled"])) if candidates else None
+            recommended = min(
+                candidates,
+                key=lambda key: (
+                    candidates[key]["brier_score"] if candidates[key]["brier_score"] is not None else 1.0 - candidates[key]["win_rate"],
+                    -candidates[key]["settled"],
+                ),
+            ) if candidates else None
             return {
                 "name": self.name,
                 "storage": self.db_path,
@@ -338,6 +381,7 @@ class Connectome:
                 "wins": int(wins),
                 "losses": int(losses),
                 "win_rate": round(wins / settled, 6) if settled else None,
+                "brier_score": round(brier_total / brier_n, 6) if brier_n else None,
                 "checkpoint_performance": checkpoint_counts,
                 "recommended_checkpoint": recommended,
                 "learning": "settlement_only",
