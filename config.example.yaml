@@ -5,9 +5,12 @@ market_monitor:
   update_interval: 0.1
 
 opportunity_detection:
-  min_price_difference: 0.3
+  min_price_difference: 0.03
   min_confidence: 0.7
   max_delay_seconds: 15
+  min_probability_lag: 0.01
+  max_probability_followthrough: 0.01
+  min_consensus_exchanges: 2
 
 trade_execution:
   max_position_size: 100
