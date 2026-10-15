@@ -201,7 +201,7 @@ function paintPolymarketQuotes(quotes,forecasts){
  const horizons=[["15m","polymarket"],["1h","polymarket_1h"]];
  horizons.forEach(([label,key])=>{
   const q=quotes[key],f=forecasts[label],tr=document.createElement("tr");
-  const close=q&&num(q.end_time)!==null?new Date(num(q.end_time)*1000).toLocaleString("en-US",{timeZone:"America/New_York",hour:"2-digit",minute:"2-digit",second:"2-digit"}):"—";
+  const close=q&&num(q.end_time)!==null?new Date(num(q.end_time)*1000).toLocaleString("en-US",{timeZone:"America/New_York",month:"2-digit",day:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:true}):"—";
   const remaining=q?duration(q.remaining_seconds):"—";
   const forecastMatches=!!(q&&f&&f.market_id===q.market_id);
   const vals=[label,q?(String(q.market_id||"—")+" · "+close):"Not currently detected",
