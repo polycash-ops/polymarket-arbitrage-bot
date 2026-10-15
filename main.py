@@ -94,6 +94,10 @@ class TradingBot:
                     "max_nodes": 1_000_000, "max_edges": 1_000_000,
                     "min_samples_for_gate": 1, "learning_rate": 0.03,
                 },
+                "analysis": {
+                    "max_nodes": 1_000_000, "max_edges": 1_000_000,
+                    "min_samples_for_gate": 1, "learning_rate": 0.03,
+                },
             },
         }
 
@@ -433,6 +437,7 @@ class TradingBot:
                 await asyncio.sleep(30)
                 pending = set(self.decision_connectome.pending_markets())
                 pending.update(self.research_connectome.pending_markets())
+                pending.update(self.analysis_connectome.pending_markets())
                 for market_id in pending:
                     try:
                         async with session.get(f"{url}/slug/{market_id}", timeout=aiohttp.ClientTimeout(total=10)) as response:
