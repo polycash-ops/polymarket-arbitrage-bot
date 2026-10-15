@@ -177,17 +177,20 @@ class MarketMonitor:
                         f"cpc-btc-updown-15m-{start_at:%Y-%m-%d}-{start_at:%H%M}z",
                     ]
                     for expected_slug in expected_slugs:
-                        async with self.session.get(url, params={"slug": expected_slug}) as response:
-                            if response.status == 200:
-                                result = await response.json()
-                                if isinstance(result, list):
-                                    # Some API responses ignore unknown query filters; verify
-                                    # the returned slug locally before trusting the result.
-                                    data.extend(
-                                        market for market in result
-                                        if isinstance(market, dict)
-                                        and str(market.get("slug") or "") == expected_slug
-                                    )
+                        # Gamma supports direct slug paths; a query-string filter may
+                        # return an unrelated page or no rows for short-window markets.
+                        for endpoint in (f"{url}/slug/{expected_slug}",):
+                            async with self.session.get(endpoint) as response:
+                                if response.status == 200:
+                                    result = await response.json()
+                                    if isinstance(result, dict) and str(result.get("slug") or "") == expected_slug:
+                                        data.append(result)
+                                    elif isinstance(result, list):
+                                        data.extend(
+                                            market for market in result
+                                            if isinstance(market, dict)
+                                            and str(market.get("slug") or "") == expected_slug
+                                        )
                         if data:
                             break
                     if data:
@@ -279,7 +282,7 @@ class MarketMonitor:
                     # from a probability that has remained unchanged.
                     await self._notify_callbacks("polymarket", point)
                 else:
-                    logger.warning("No eligible active BTC 15-minute Up/Down market found")
+                    logger.warning("No eligible active BTC 15-minute Up/Down market found; Gamma rows examined=%s", len(data))
                 await asyncio.sleep(2)
             except Exception as exc:
                 logger.error("Polymarket polling error: %s", exc)
