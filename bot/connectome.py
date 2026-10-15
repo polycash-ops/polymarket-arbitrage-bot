@@ -134,6 +134,16 @@ class Connectome:
             "confidence": confidence_bucket,
             "exchanges": exchanges,
             "spread": spread_bucket,
+            # Raw observation values are stored for calibration/audit, but excluded
+            # from node signatures so tiny numeric changes do not create endless nodes.
+            "_raw_scan_confidence": round(min(0.999, max(0.001, confidence)), 6),
+            "_snapshot_midpoint": round(midpoint, 6),
+            "_snapshot_market_up_probability": round(float(getattr(opportunity, "market_up_probability", midpoint) or midpoint), 6),
+            "_snapshot_odds_change": round(odds_change, 6),
+            "_snapshot_time_remaining_seconds": round(remaining, 3),
+            "_snapshot_delay_seconds": round(delay, 3),
+            "_snapshot_btc_move": round(move, 6),
+            "_snapshot_direction": direction,
         }
         if role == "research":
             # Research independently combines time, odds, momentum and exchange agreement.
@@ -343,23 +353,38 @@ class Connectome:
                 item["wins" if int(row["outcome"]) == 1 else "losses"] += 1
             brier_total = 0.0
             brier_n = 0
+            raw_brier_total = 0.0
+            raw_brier_n = 0
             for row in rows:
                 features = json.loads(row["features_json"])
+                label = int(row["outcome"])
+                bucket = checkpoint_counts[str(features.get("checkpoint", "trade_signal"))]
                 forecast = features.get("_forecast_probability")
                 if forecast is not None:
-                    score = (float(forecast) - int(row["outcome"])) ** 2
-                    bucket = checkpoint_counts[str(features.get("checkpoint", "trade_signal"))]
+                    score = (float(forecast) - label) ** 2
                     bucket.setdefault("brier_sum", 0.0)
                     bucket.setdefault("brier_n", 0)
                     bucket["brier_sum"] += score
                     bucket["brier_n"] += 1
                     brier_total += score
                     brier_n += 1
+                raw_confidence = features.get("_raw_scan_confidence")
+                if raw_confidence is not None:
+                    raw_score = (float(raw_confidence) - label) ** 2
+                    bucket.setdefault("raw_brier_sum", 0.0)
+                    bucket.setdefault("raw_brier_n", 0)
+                    bucket["raw_brier_sum"] += raw_score
+                    bucket["raw_brier_n"] += 1
+                    raw_brier_total += raw_score
+                    raw_brier_n += 1
             for item in checkpoint_counts.values():
                 item["win_rate"] = round(item["wins"] / item["settled"], 6) if item["settled"] else None
                 item["brier_score"] = round(item.get("brier_sum", 0.0) / item["brier_n"], 6) if item.get("brier_n") else None
+                item["raw_confidence_brier"] = round(item.get("raw_brier_sum", 0.0) / item["raw_brier_n"], 6) if item.get("raw_brier_n") else None
                 item.pop("brier_sum", None)
                 item.pop("brier_n", None)
+                item.pop("raw_brier_sum", None)
+                item.pop("raw_brier_n", None)
             candidates = {
                 key: value for key, value in checkpoint_counts.items()
                 if key in {"first_seen", "10m", "5m", "3m", "1m"} and value["settled"] >= self.min_samples_for_gate
@@ -384,6 +409,7 @@ class Connectome:
                 "losses": int(losses),
                 "win_rate": round(wins / settled, 6) if settled else None,
                 "brier_score": round(brier_total / brier_n, 6) if brier_n else None,
+                "raw_confidence_brier": round(raw_brier_total / raw_brier_n, 6) if raw_brier_n else None,
                 "checkpoint_performance": checkpoint_counts,
                 "recommended_checkpoint": recommended,
                 "learning": "settlement_only",
