@@ -55,14 +55,14 @@ h1{font-size:clamp(1.5rem,4vw,2.2rem);line-height:1.15;margin:0 0 8px;letter-spa
 </style>
 </head>
 <body><main>
-<header><div><h1>Polymarket Arbitrage Research</h1><p class="subtitle">Two independent Connectomes · paper trading only · live execution hard-blocked</p></div><span class="pill"><span class="dot"></span> PAPER MODE</span></header>
+<header><div><h1>Polymarket Arbitrage Research</h1><p class="subtitle">Two independent Connectomes · forecast accuracy research · trade execution disabled</p></div><span class="pill"><span class="dot"></span> FORECAST-ONLY MODE</span></header>
 <div id="error" role="alert"></div>
 <section class="section">
  <div class="section-head"><h2>Performance overview</h2><span class="updated" id="updated">Waiting for status…</span></div>
  <div class="cards">
-  <article class="card"><div class="metric-label">Paper balance</div><div class="metric" id="balance">—</div><div class="metric-sub">Simulation only</div></article>
-  <article class="card"><div class="metric-label">Realized profit / loss</div><div class="metric" id="profit">—</div><div class="metric-sub" id="todayProfit">Settled trades only</div></article>
-  <article class="card"><div class="metric-label">Settled trades</div><div class="metric" id="tradesCount">—</div><div class="metric-sub" id="winRate">Win rate: —</div></article>
+  <article class="card"><div class="metric-label">Trade execution</div><div class="metric" id="balance">—</div><div class="metric-sub">Simulation only</div></article>
+  <article class="card"><div class="metric-label">Trading P/L</div><div class="metric" id="profit">—</div><div class="metric-sub" id="todayProfit">Settled trades only</div></article>
+  <article class="card"><div class="metric-label">Trades</div><div class="metric" id="tradesCount">—</div><div class="metric-sub" id="winRate">Win rate: —</div></article>
   <article class="card"><div class="metric-label">Opportunities detected</div><div class="metric" id="opportunities">—</div><div class="metric-sub" id="uptime">Uptime: —</div></article>
   <article class="card"><div class="metric-label">Polymarket scans</div><div class="metric" id="scanCount">—</div><div class="metric-sub">Completed scan cycles</div></article>
  </div>
@@ -82,12 +82,12 @@ h1{font-size:clamp(1.5rem,4vw,2.2rem);line-height:1.15;margin:0 0 8px;letter-spa
  </div>
 </div></section>
 <section class="section">
- <div class="section-head"><h2>Connectome learning graphs</h2><span class="small" id="connectomeSummary">Learning from settled paper outcomes only</span></div>
+ <div class="section-head"><h2>Connectome learning graphs</h2><span class="small" id="connectomeSummary">Learning from settled forecast outcomes only</span></div>
  <div class="grid-two">
   <article class="card"><h2>Decision Connectome</h2><div class="metric-label">Snapshot forecast accuracy · settled snapshots</div><div class="metric" id="decisionAccuracy">—</div><div class="small" id="decisionAccuracyDetail">Awaiting verified settlements</div><div class="metric-label" style="margin-top:12px">Up-probability Brier score</div><div id="decisionBrier" style="font-weight:700">—</div><div class="metric-label" style="margin-top:12px">Active nodes / capacity</div><div class="metric" id="decisionNodes">—</div><div class="metric-label" style="margin-top:12px">Active edges / capacity</div><div class="metric" id="decisionEdges">—</div><div class="metric-label" style="margin-top:12px">Accuracy by checkpoint</div><div id="decisionCheckpoints" class="small">Awaiting settled contracts</div><div class="metric-label" style="margin-top:10px">Best supported checkpoint</div><div id="decisionBestCheckpoint" style="font-weight:700">Not enough samples</div></article>
   <article class="card"><h2>Research Connectome</h2><div class="metric-label">Snapshot forecast accuracy · settled snapshots</div><div class="metric" id="researchAccuracy">—</div><div class="small" id="researchAccuracyDetail">Awaiting verified settlements</div><div class="metric-label" style="margin-top:12px">Up-probability Brier score</div><div id="researchBrier" style="font-weight:700">—</div><div class="metric-label" style="margin-top:12px">Active nodes / capacity</div><div class="metric" id="researchNodes">—</div><div class="metric-label" style="margin-top:12px">Active edges / capacity</div><div class="metric" id="researchEdges">—</div><div class="metric-label" style="margin-top:12px">Accuracy by checkpoint</div><div id="researchCheckpoints" class="small">Awaiting settled contracts</div><div class="metric-label" style="margin-top:10px">Best supported checkpoint</div><div id="researchBestCheckpoint" style="font-weight:700">Not enough samples</div></article>
  </div>
- <p class="small">Each graph supports up to 1,000,000 nodes and 1,000,000 edges. Accuracy is calculated across settled forecast snapshots, including observations with no paper trade. Pending snapshots are excluded until verified contract settlement. Internal reference trades are not displayed here.</p>
+ <p class="small">Each graph supports up to 1,000,000 nodes and 1,000,000 edges. Agents are in forecast-only mode: no paper or live trades are opened. Accuracy updates whenever a new snapshot is recorded and is scored once its contract settles. Pending snapshots are excluded from accuracy until verified settlement.</p>
 </section>
 <section class="section">
  <div class="section-head"><h2>Market data</h2><span class="small">Latest observed exchange prices</span></div>
@@ -120,8 +120,8 @@ function paintConnectomes(graphs){
  put("researchLearning",fmt(r.settled_observations)+" settled · "+rate(r));
  const checkpointLine=g=>Object.entries(g.checkpoint_performance||{}).filter(([k,v])=>["first_seen","10m","5m","3m","1m"].includes(k)).map(([k,v])=>k+": "+fmt(v.settled)+" settled, "+(num(v.win_rate)===null?"—":pct(v.win_rate))+" accuracy"+(num(v.brier_score)===null?"":" · Brier "+Number(v.brier_score).toFixed(3))).join(" · ")||"Awaiting settled contracts";
  put("decisionCheckpoints",checkpointLine(d));put("researchCheckpoints",checkpointLine(r));
- put("decisionBestCheckpoint",d.recommended_checkpoint||"Not enough samples (20 per checkpoint)");
- put("researchBestCheckpoint",r.recommended_checkpoint||"Not enough samples (20 per checkpoint)");
+ put("decisionBestCheckpoint",d.recommended_checkpoint||"Awaiting settled snapshots");
+ put("researchBestCheckpoint",r.recommended_checkpoint||"Awaiting settled snapshots");
  put("connectomeSummary","Accuracy uses every settled internal snapshot; internal reference trades are not shown");
 }
 function tradeTimestamp(t){
@@ -174,12 +174,12 @@ async function refresh(){
  try{
   const response=await fetch("/api/status?ts="+Date.now(),{cache:"no-store"});if(!response.ok)throw new Error("Status endpoint returned HTTP "+response.status);
   const d=await response.json(),s=d.stats||{},p=d.performance||{},prices=d.latest_prices||{},sp=d.price_spreads||{};
-  el("error").style.display="none";put("balance",money(p.current_balance));put("profit",money(p.total_profit??s.total_profit));
-  put("todayProfit","Settled P/L only");put("tradesCount",num(p.total_trades??s.trades_executed)??0);
-  put("winRate","Win rate: "+(num(p.win_rate)===null?"—":(num(p.win_rate)>1?num(p.win_rate).toFixed(1)+"%":pct(p.win_rate))));
+  el("error").style.display="none";put("balance","DISABLED");put("profit","—");
+  put("todayProfit","Settled P/L only");put("tradesCount","DISABLED");
+  put("winRate","Forecast-only phase · no positions opened");
   put("opportunities",num(s.opportunities_detected)??0);put("scanCount",num(d.scan_count)??0);put("uptime","Uptime: "+duration(s.uptime));
   window._lastEquityCurve=Array.isArray(d.equity_curve)?d.equity_curve:[];drawProfitCurve(window._lastEquityCurve);paintConnectomes(d.connectomes||{});
-  put("mode",String(d.mode??"paper").toUpperCase());put("avgProfit",money(p.avg_profit_per_trade));put("bestTrade",money(p.best_trade));put("worstTrade",money(p.worst_trade));
+  put("mode",String(d.mode??"paper").toUpperCase());put("avgProfit","Disabled");put("bestTrade","Disabled");put("worstTrade","Disabled");
   put("binance",price(prices.binance));put("coinbase",price(prices.coinbase));put("kraken",price(prices.kraken));
   put("bcSpread","vs Coinbase: "+pct(sp["binance-coinbase"]));put("ckSpread","vs Kraken: "+pct(sp["coinbase-kraken"]));put("bkSpread","vs Binance: "+pct(sp["binance-kraken"]));
   const running=!!d.bot_running;put("runningBadge",running?"BOT RUNNING":"BOT STOPPED");el("runningBadge").className="badge "+(running?"good":"bad");
