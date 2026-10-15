@@ -173,7 +173,27 @@ class Connectome:
         exchange_relationship = str(getattr(opportunity, "exchange_relationship", "unknown"))
         pair_relationships = getattr(opportunity, "exchange_pair_relationships", {}) or {}
         remaining_bucket = "early" if remaining > 600 else "mid" if remaining > 300 else "late" if remaining > 60 else "expiry"
-        if remaining > 720:
+        market_horizon = str(getattr(opportunity, "market_horizon", "15m") or "15m")
+        if market_horizon == "1h":
+            if remaining > 3000:
+                remaining_fine = "50m_60m"
+            elif remaining > 2400:
+                remaining_fine = "40m_50m"
+            elif remaining > 1800:
+                remaining_fine = "30m_40m"
+            elif remaining > 1200:
+                remaining_fine = "20m_30m"
+            elif remaining > 900:
+                remaining_fine = "15m_20m"
+            elif remaining > 600:
+                remaining_fine = "10m_15m"
+            elif remaining > 300:
+                remaining_fine = "5m_10m"
+            elif remaining > 60:
+                remaining_fine = "1m_5m"
+            else:
+                remaining_fine = "under_1m"
+        elif remaining > 720:
             remaining_fine = "12m_plus"
         elif remaining > 600:
             remaining_fine = "10m_12m"
