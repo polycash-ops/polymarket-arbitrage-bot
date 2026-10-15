@@ -137,10 +137,10 @@ class TradingBot:
         self.last_connectome_remaining[market_id] = remaining
         checkpoint = None
         if checkpoint_candidates:
-            checkpoint = min(
-                checkpoint_candidates,
-                key=lambda candidate: candidate[1] if candidate[0] != "first_seen" else float("inf"),
-            )[0]
+            if any(candidate[0] == "first_seen" for candidate in checkpoint_candidates):
+                checkpoint = "first_seen"
+            else:
+                checkpoint = min(checkpoint_candidates, key=lambda candidate: candidate[1])[0]
         if checkpoint is None and not continuous_due:
             return
         if checkpoint is not None:
