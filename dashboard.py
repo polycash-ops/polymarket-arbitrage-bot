@@ -118,7 +118,7 @@ function paintConnectomes(graphs){
  put("decisionLearning",fmt(d.settled_observations)+" settled · "+rate(d));
  put("researchNodes",fmt(r.nodes_active)+" / "+fmt(r.node_capacity));put("researchEdges",fmt(r.edges_active)+" / "+fmt(r.edge_capacity));
  put("researchLearning",fmt(r.settled_observations)+" settled · "+rate(r));
- const checkpointLine=g=>Object.entries(g.checkpoint_performance||{}).filter(([k,v])=>["first_seen","10m","5m","3m","1m"].includes(k)).map(([k,v])=>k+": "+fmt(v.settled)+" settled, "+(num(v.win_rate)===null?"—":pct(v.win_rate))).join(" · ")||"Awaiting settled contracts";
+ const checkpointLine=g=>Object.entries(g.checkpoint_performance||{}).filter(([k,v])=>["first_seen","10m","5m","3m","1m"].includes(k)).map(([k,v])=>k+": "+fmt(v.settled)+" settled, "+(num(v.win_rate)===null?"—":pct(v.win_rate))+" accuracy"+(num(v.brier_score)===null?"":" · Brier "+Number(v.brier_score).toFixed(3))).join(" · ")||"Awaiting settled contracts";
  put("decisionCheckpoints",checkpointLine(d));put("researchCheckpoints",checkpointLine(r));
  put("decisionBestCheckpoint",d.recommended_checkpoint||"Not enough samples (20 per checkpoint)");
  put("researchBestCheckpoint",r.recommended_checkpoint||"Not enough samples (20 per checkpoint)");
