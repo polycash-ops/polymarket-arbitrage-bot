@@ -287,6 +287,19 @@ class Connectome:
                 "coinbase_kraken_relation": str(pair_relationships.get("coinbase_kraken", "unknown")),
                 "action": action,
             }
+        # Apply the finer market-state vocabulary to both independent graphs.
+        # Shared feature definitions do not share learned weights or outcomes.
+        base.update({
+            "remaining_fine": remaining_fine,
+            "midpoint_fine": midpoint_fine,
+            "odds_change_magnitude": odds_change_bucket,
+            "spread_fine": spread_fine,
+            "time_of_day": time_of_day_bucket,
+            "weekday": weekday_bucket,
+            "binance_move_magnitude": move_magnitude_bucket(exchange_moves["binance"]),
+            "coinbase_move_magnitude": move_magnitude_bucket(exchange_moves["coinbase"]),
+            "kraken_move_magnitude": move_magnitude_bucket(exchange_moves["kraken"]),
+        })
         # Preserve exact values in each observation row for audit and calibration,
         # while the graph itself learns only from the bounded categorical signatures.
         base.update({
