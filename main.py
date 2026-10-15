@@ -133,7 +133,8 @@ class TradingBot:
             0.50 + min(move_abs / 0.20, 1.0) * 0.20
             + min(abs(midpoint - 0.5) / 0.5, 1.0) * 0.20
             + (0.10 if len(exchanges) >= 2 else 0.0)))
-        btc_prices = [prices[name].price for name in ("binance", "coinbase", "kraken") if name in prices]
+        quote_midpoint = (float(point.bid) + float(point.ask)) / 2.0 if point.bid is not None and point.ask is not None and 0 < point.bid <= point.ask < 1 else float(point.price)
+        midpoint = quote_midpoint
         for checkpoint in checkpoints:
             seen.add(checkpoint)
             snapshot = SimpleNamespace(
