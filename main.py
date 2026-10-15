@@ -116,7 +116,7 @@ class TradingBot:
                 if remaining <= seconds:
                     seen.add(label)
         else:
-            for label, seconds in (("10m", 600), ("5m", 300), ("1m", 60)):
+            for label, seconds in (("10m", 600), ("5m", 300), ("3m", 180), ("1m", 60)):
                 if label not in seen and remaining <= seconds:
                     checkpoints.append(label)
         if not checkpoints:
