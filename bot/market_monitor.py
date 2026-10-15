@@ -9,6 +9,7 @@ import json
 import time
 from typing import Dict, Optional
 from dataclasses import dataclass
+from datetime import datetime
 import logging
 
 logger = logging.getLogger(__name__)
@@ -22,6 +23,9 @@ class PricePoint:
     volume: float
     bid: Optional[float] = None
     ask: Optional[float] = None
+    market_id: Optional[str] = None
+    question: Optional[str] = None
+    end_time: Optional[float] = None
 
 
 class MarketMonitor:
@@ -149,9 +153,9 @@ class MarketMonitor:
         return value if isinstance(value, list) else []
 
     async def _monitor_polymarket(self):
-        """Poll Gamma for active BTC/Bitcoin prediction-market probabilities."""
+        """Poll the active 15-minute BTC Up/Down contract and publish quote snapshots."""
         url = "https://gamma-api.polymarket.com/markets"
-        params = {"limit": 50, "offset": 0, "active": "true", "closed": "false"}
+        params = {"limit": 100, "offset": 0, "active": "true", "closed": "false"}
         while self.running:
             try:
                 if not self.session:
@@ -162,55 +166,76 @@ class MarketMonitor:
                         logger.warning("Polymarket Gamma returned HTTP %s", response.status)
                     else:
                         data = await response.json()
-                        bitcoin_markets = [
-                            market for market in data
-                            if isinstance(market, dict)
-                            and any(term in str(market.get("question", "")).lower()
-                                    for term in ("bitcoin", "btc"))
-                        ]
-                        if bitcoin_markets:
-                            market = bitcoin_markets[0]
+                        now = time.time()
+                        candidates = []
+                        for market in data if isinstance(data, list) else []:
+                            if not isinstance(market, dict):
+                                continue
+                            question = str(market.get("question") or "")
+                            slug = str(market.get("slug") or "")
+                            q = question.lower()
+                            s = slug.lower()
+                            # Keep this strategy tied to the intended short-dated BTC Up/Down contract.
+                            is_15m = ("15m" in s and ("btc" in s or "bitcoin" in s)) or (
+                                ("up or down" in q or ("up" in q and "down" in q))
+                                and ("bitcoin" in q or "btc" in q)
+                                and ("15 minute" in q or "15m" in q)
+                            )
+                            if not is_15m:
+                                continue
+                            raw_end = market.get("endDate") or market.get("endDateIso") or market.get("end_date")
+                            end_time = None
+                            if raw_end:
+                                try:
+                                    end_time = datetime.fromisoformat(str(raw_end).replace("Z", "+00:00")).timestamp()
+                                except (TypeError, ValueError):
+                                    pass
+                            if end_time is not None and end_time <= now:
+                                continue
                             outcomes = self._as_list(market.get("outcomes"))
                             prices = self._as_list(market.get("outcomePrices"))
-                            yes_price = None
-
-                            # Gamma's usual schema has outcome names and a parallel
-                            # outcomePrices array, not a price property on each outcome.
-                            if outcomes and isinstance(outcomes[0], dict):
-                                raw_price = outcomes[0].get("price")
-                                if raw_price is not None:
-                                    yes_price = float(raw_price)
-                            elif prices:
-                                yes_price = float(prices[0])
-
-                            if yes_price is not None and 0 <= yes_price <= 1:
-                                try:
-                                    volume = float(market.get("volume") or 0)
-                                except (TypeError, ValueError):
-                                    volume = 0.0
-                                market_key = str(market.get("slug") or market.get("id") or "")
-                                previous = self.prices.get("polymarket")
-                                changed = (
-                                    previous is None
-                                    or abs(previous.price - yes_price) > 1e-6
-                                    or market_key != self.polymarket_market_key
-                                )
-                                if changed:
-                                    point = PricePoint(
-                                        exchange="polymarket", price=yes_price,
-                                        timestamp=time.time(), volume=volume
-                                    )
-                                    self.prices["polymarket"] = point
-                                    self.polymarket_market_key = market_key
-                                    await self._notify_callbacks("polymarket", point)
-                            else:
-                                logger.warning(
-                                    "Could not parse Polymarket probability for market %s",
-                                    market.get("slug") or market.get("id") or "unknown"
-                                )
+                            if not prices or len(prices) < 2:
+                                continue
+                            try:
+                                first_price = float(prices[0])
+                                second_price = float(prices[1])
+                            except (TypeError, ValueError):
+                                continue
+                            if not (0 <= first_price <= 1 and 0 <= second_price <= 1):
+                                continue
+                            candidates.append((end_time or float("inf"), market, first_price, outcomes))
+                        if candidates:
+                            candidates.sort(key=lambda item: item[0])
+                            end_time, market, up_price, outcomes = candidates[0]
+                            slug = str(market.get("slug") or market.get("id") or "")
+                            question = str(market.get("question") or "BTC Up or Down 15m")
+                            try:
+                                volume = float(market.get("volume") or 0)
+                            except (TypeError, ValueError):
+                                volume = 0.0
+                            bid = ask = None
+                            try:
+                                if market.get("bestBid") is not None:
+                                    bid = float(market["bestBid"])
+                                if market.get("bestAsk") is not None:
+                                    ask = float(market["bestAsk"])
+                            except (TypeError, ValueError):
+                                bid = ask = None
+                            point = PricePoint(
+                                exchange="polymarket", price=up_price, timestamp=now,
+                                volume=volume, bid=bid, ask=ask, market_id=slug,
+                                question=question, end_time=None if end_time == float("inf") else end_time
+                            )
+                            self.prices["polymarket"] = point
+                            self.polymarket_market_key = slug
+                            # Publish every poll: the detector needs to distinguish a fresh poll
+                            # from a probability that has remained unchanged.
+                            await self._notify_callbacks("polymarket", point)
+                        else:
+                            logger.warning("No eligible active BTC 15-minute Up/Down market found")
                 await asyncio.sleep(2)
             except Exception as exc:
-                logger.error("❌ Polymarket polling error: %s", exc)
+                logger.error("Polymarket polling error: %s", exc)
                 await asyncio.sleep(5)
 
     async def _notify_callbacks(self, exchange: str, price_point: PricePoint):
