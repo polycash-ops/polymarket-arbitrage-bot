@@ -182,6 +182,26 @@ class TradingBot:
 
     async def _on_opportunity_detected(self, opportunity: Opportunity):
         self.stats["opportunities_detected"] += 1
+        remaining = max(0.0, float(opportunity.market_end_time or time.time()) - time.time())
+        opportunity.time_remaining = remaining
+        opportunity.minutes_remaining = remaining / 60.0
+        opportunity.checkpoint = (
+            "first_seen" if remaining > 600 else
+            "10m" if remaining > 300 else
+            "5m" if remaining > 180 else
+            "3m" if remaining > 60 else "1m"
+        )
+        if opportunity.yes_bid is not None and opportunity.yes_ask is not None:
+            opportunity.midpoint = (float(opportunity.yes_bid) + float(opportunity.yes_ask)) / 2.0
+        else:
+            opportunity.midpoint = 0.5
+        opportunity.depth_imbalance = None
+        odds_history = self.opportunity_detector.price_history.get("polymarket")
+        opportunity.market_probability_change = odds_history.get_probability_change(10) if odds_history else 0.0
+        consensus_move, agreeing_exchanges = self.opportunity_detector._consensus_move()
+        opportunity.btc_consensus_move = float(consensus_move or 0.0)
+        opportunity.agreeing_exchange_count = len(agreeing_exchanges)
+        opportunity.prediction_source = "btc_consensus"
         logger.info(
             "OPPORTUNITY market=%s direction=%s move=%.4f%% detector_confidence=%.3f",
             opportunity.market_id, opportunity.direction, opportunity.price_difference, opportunity.confidence,
