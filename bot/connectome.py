@@ -259,6 +259,8 @@ class Connectome:
             # from node signatures so tiny numeric changes do not create endless nodes.
             "_raw_scan_confidence": round(min(0.999, max(0.001, confidence)), 6),
             "_snapshot_midpoint": round(midpoint, 6),
+            "_snapshot_bid": round(float(bid), 6) if bid is not None else None,
+            "_snapshot_ask": round(float(ask), 6) if ask is not None else None,
             "_snapshot_market_up_probability": round(float(getattr(opportunity, "market_up_probability", midpoint) or midpoint), 6),
             "_snapshot_odds_change": round(odds_change, 6),
             "_snapshot_time_remaining_seconds": round(remaining, 3),
@@ -270,6 +272,44 @@ class Connectome:
             "_snapshot_exchange_relationship": exchange_relationship,
             "_snapshot_direction": direction,
         }
+        if role == "analysis":
+            # Dedicated graph for overlapping quote-trend analysis. Features are
+            # categorical; exact values are retained below for audit/scoring.
+            def signed_move(value, cutoffs=(0.002, 0.01, 0.03)):
+                if value is None:
+                    return "unavailable"
+                value = float(value)
+                if value < -cutoffs[-1]: return "strong_down"
+                if value < -cutoffs[-2]: return "down"
+                if value < -cutoffs[0]: return "slight_down"
+                if value > cutoffs[-1]: return "strong_up"
+                if value > cutoffs[-2]: return "up"
+                if value > cutoffs[0]: return "slight_up"
+                return "flat"
+            base = {
+                "market_horizon": str(getattr(opportunity, "market_horizon", "15m")),
+                "contract_phase": remaining_fine,
+                "contract_direction_prior": "up_midpoint" if midpoint >= 0.5 else "down_midpoint",
+                "midpoint_regime": midpoint_fine,
+                "bid_ask_spread": spread_fine,
+                "bid_refresh_move": signed_move(getattr(opportunity, "bid_change_refresh", None), (0.001, 0.005, 0.02)),
+                "ask_refresh_move": signed_move(getattr(opportunity, "ask_change_refresh", None), (0.001, 0.005, 0.02)),
+                "midpoint_refresh_move": signed_move(getattr(opportunity, "midpoint_change_refresh", None), (0.001, 0.005, 0.02)),
+                "bid_15m_move": signed_move(getattr(opportunity, "bid_change_15m", None), (0.005, 0.02, 0.05)),
+                "ask_15m_move": signed_move(getattr(opportunity, "ask_change_15m", None), (0.005, 0.02, 0.05)),
+                "midpoint_15m_move": signed_move(getattr(opportunity, "midpoint_change_15m", None), (0.005, 0.02, 0.05)),
+                "bid_1h_move": signed_move(getattr(opportunity, "bid_change_1h", None), (0.01, 0.03, 0.08)),
+                "ask_1h_move": signed_move(getattr(opportunity, "ask_change_1h", None), (0.01, 0.03, 0.08)),
+                "midpoint_1h_move": signed_move(getattr(opportunity, "midpoint_change_1h", None), (0.01, 0.03, 0.08)),
+                "depth_15m": "unavailable" if getattr(opportunity, "order_depth_imbalance_15m", None) is None else
+                    ("bid_heavy" if float(opportunity.order_depth_imbalance_15m) > 0.2 else "ask_heavy" if float(opportunity.order_depth_imbalance_15m) < -0.2 else "balanced"),
+                "depth_1h": "unavailable" if getattr(opportunity, "order_depth_imbalance_1h", None) is None else
+                    ("bid_heavy" if float(opportunity.order_depth_imbalance_1h) > 0.2 else "ask_heavy" if float(opportunity.order_depth_imbalance_1h) < -0.2 else "balanced"),
+                "btc_consensus": exchange_relationship,
+                "odds_momentum": odds_momentum,
+                "remaining_fine": remaining_fine,
+                "time_of_day": time_of_day_bucket,
+            }
         if role == "research":
             # Research independently combines time, odds, momentum and exchange agreement.
             base = {
@@ -513,6 +553,27 @@ class Connectome:
             logger.info("CONNECTOME_CONTRACT_SETTLED graph=%s market=%s checkpoints=%d actual_up=%s",
                         self.name, market_id, settled, actual_up)
         return settled
+
+    def recent_market_observations(self, market_id: str, since: float) -> list[dict]:
+        """Read recent raw quote snapshots for one exact contract."""
+        with self._connect() as con:
+            rows = con.execute(
+                "SELECT observed_at,features_json FROM observations WHERE market_id=? AND observed_at>=? ORDER BY observed_at ASC",
+                (market_id, float(since)),
+            ).fetchall()
+        result = []
+        for row in rows:
+            try:
+                features = json.loads(row["features_json"])
+                result.append({
+                    "timestamp": float(row["observed_at"]),
+                    "bid": features.get("_snapshot_bid"),
+                    "ask": features.get("_snapshot_ask"),
+                    "midpoint": features.get("_snapshot_midpoint"),
+                })
+            except (TypeError, ValueError):
+                continue
+        return result
 
     def observed_checkpoints(self, market_id: str) -> set[str]:
         """Return checkpoint labels already persisted for this contract."""
