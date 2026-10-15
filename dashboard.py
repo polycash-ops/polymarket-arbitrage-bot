@@ -40,7 +40,7 @@ def index():
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="theme-color" content="#101722">
-<title>Polymarket Arbitrage Research · Connectomes</title>
+<title>BTC Polymarket Connectome Trend Research</title>
 <style>
 :root{color-scheme:dark;--bg:#0b111a;--panel:#141e2b;--panel2:#101925;--line:#273649;--text:#edf3fa;--muted:#9aabc0;--green:#54d6a0;--red:#ff8585;--amber:#ffd078;--blue:#84baff}
 *{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at top,#17283a 0,#0b111a 55%);color:var(--text);font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
@@ -55,7 +55,7 @@ h1{font-size:clamp(1.5rem,4vw,2.2rem);line-height:1.15;margin:0 0 8px;letter-spa
 </style>
 </head>
 <body><main>
-<header><div><h1>Polymarket Arbitrage Research</h1><p class="subtitle">Two independent Connectomes · forecast accuracy research · trade execution disabled</p></div><span class="pill"><span class="dot"></span> FORECAST-ONLY MODE</span></header>
+<header><div><h1>BTC Polymarket Connectome Trend Research</h1><p class="subtitle">Three independent Connectomes · 5-second quote snapshots · 15m and hourly directional forecasting · trade execution disabled</p></div><span class="pill"><span class="dot"></span> FORECAST-ONLY MODE</span></header>
 <div id="error" role="alert"></div>
 <section class="section">
  <div class="section-head"><h2>Performance overview</h2><span class="updated" id="updated">Waiting for status…</span></div>
@@ -96,7 +96,7 @@ h1{font-size:clamp(1.5rem,4vw,2.2rem);line-height:1.15;margin:0 0 8px;letter-spa
   <div><div class="metric-label">Recorded snapshots</div><div class="metric" id="analysisObservations">—</div><div class="metric-label">Verified settlements / forecast accuracy</div><div id="analysisSettled" style="font-weight:700">Awaiting verified settlements</div><div class="metric-label">Model Brier vs market midpoint Brier</div><div id="analysisBrier" style="font-weight:700">—</div></div>
  </div>
  <p class="small">The analysis graph scores directional forecasts against each contract's verified close. It samples quote changes on the dashboard's 5-second refresh cadence and keeps 15-minute and hourly contracts separate by market ID and end timestamp. Depth comes from the Polymarket CLOB top-five order-book levels when the book endpoint responds; unavailable readings remain explicitly marked, never inferred from quotes.</p>
- <div class="table-wrap"><table><thead><tr><th>Contract horizon</th><th>Market / close</th><th>Bid</th><th>Ask</th><th>Midpoint</th><th>Midpoint Δ / refresh</th><th>Depth imbalance</th><th>Bid depth</th><th>Ask depth</th><th>Time to close</th></tr></thead><tbody id="polymarketQuoteRows"><tr><td colspan="10" class="empty">Waiting for Polymarket quotes</td></tr></tbody></table></div>
+ <div class="table-wrap"><table><thead><tr><th>Contract horizon</th><th>Market / close</th><th>Bid</th><th>Ask</th><th>Midpoint</th><th>Midpoint Δ / refresh</th><th>Depth imbalance</th><th>Bid depth</th><th>Ask depth</th><th>Analysis P(Up)</th><th>Trend</th><th>Time to close</th></tr></thead><tbody id="polymarketQuoteRows"><tr><td colspan="12" class="empty">Waiting for Polymarket quotes</td></tr></tbody></table></div>
 </div></section>
 <section class="section">
  <div class="section-head"><h2>Market data</h2><span class="small">Latest observed exchange prices</span></div>
@@ -196,19 +196,22 @@ function drawProfitCurve(points){
  const last=points[points.length-1];put("curveSummary",Math.max(0,points.length-1)+" settled trades · latest balance "+money(last.balance)+" · realized P/L "+money(last.profit));
  ctx.fillStyle="#9aabc0";ctx.fillText(points[0].label||"Start",pad.l,height-7);const endLabel=points[points.length-1].label||"Latest";ctx.fillText(endLabel,Math.max(pad.l,width-pad.r-ctx.measureText(endLabel).width),height-7);
 }
-function paintPolymarketQuotes(quotes){
+function paintPolymarketQuotes(quotes,forecasts){
  const body=el("polymarketQuoteRows");if(!body)return;body.replaceChildren();
  const horizons=[["15m","polymarket"],["1h","polymarket_1h"]];
  horizons.forEach(([label,key])=>{
-  const q=quotes[key],tr=document.createElement("tr");
+  const q=quotes[key],f=forecasts[label],tr=document.createElement("tr");
   const close=q&&num(q.end_time)!==null?new Date(num(q.end_time)*1000).toLocaleString("en-US",{timeZone:"America/New_York",hour:"2-digit",minute:"2-digit",second:"2-digit"}):"—";
   const remaining=q?duration(q.remaining_seconds):"—";
+  const forecastMatches=!!(q&&f&&f.market_id===q.market_id);
   const vals=[label,q?(String(q.market_id||"—")+" · "+close):"Not currently detected",
    q?pct(q.bid):"—",q?pct(q.ask):"—",q?pct(q.midpoint):"—",
    q&&q.refresh_changes&&num(q.refresh_changes.midpoint_change_refresh)!==null?pct(q.refresh_changes.midpoint_change_refresh):"—",
    q&&num(q.depth_imbalance)!==null?pct(q.depth_imbalance):"Unavailable",
    q&&num(q.bid_depth)!==null?Number(q.bid_depth).toFixed(2):"—",
-   q&&num(q.ask_depth)!==null?Number(q.ask_depth).toFixed(2):"—",remaining];
+   q&&num(q.ask_depth)!==null?Number(q.ask_depth).toFixed(2):"—",
+   forecastMatches?pct(f.analysis_up_probability):"—",
+   forecastMatches?String(f.analysis_direction):"Awaiting snapshot",remaining];
   vals.forEach(v=>{const td=document.createElement("td");td.textContent=String(v);tr.appendChild(td)});body.appendChild(tr);
  });
 }
@@ -216,7 +219,7 @@ async function refresh(){
  try{
   const response=await fetch("/api/status?ts="+Date.now(),{cache:"no-store"});if(!response.ok)throw new Error("Status endpoint returned HTTP "+response.status);
   const d=await response.json(),s=d.stats||{},p=d.performance||{},prices=d.latest_prices||{},sp=d.price_spreads||{};
-  paintPolymarketQuotes(d.latest_polymarket_quotes||{});
+  paintPolymarketQuotes(d.latest_polymarket_quotes||{},d.latest_analysis_forecasts||{});
   el("error").style.display="none";put("balance","DISABLED");put("profit","—");
   put("todayProfit","Settled P/L only");put("tradesCount","DISABLED");
   put("winRate","Forecast-only phase · no positions opened");
