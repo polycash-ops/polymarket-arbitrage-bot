@@ -35,7 +35,7 @@ class TradingBot:
         graph_config = self.config.get("connectomes", {})
         self.decision_connectome = Connectome("decision", graph_config.get("decision", {}))
         self.research_connectome = Connectome("research", graph_config.get("research", {}))
-        self.scan_checkpoints_seen = set()
+        self.scan_checkpoints_seen = {}
         self.stats = {
             "start_time": time.time(),
             "opportunities_detected": 0,
@@ -112,7 +112,7 @@ class TradingBot:
             seen.add("first_seen")
             # A horizon already passed at discovery is recorded as missed, not
             # falsely represented as an observation from that time.
-            for label, seconds in (("10m", 600), ("5m", 300), ("1m", 60)):
+            for label, seconds in (("10m", 600), ("5m", 300), ("3m", 180), ("1m", 60)):
                 if remaining <= seconds:
                     seen.add(label)
         else:
@@ -139,7 +139,11 @@ class TradingBot:
             seen.add(checkpoint)
             snapshot = SimpleNamespace(
                 timestamp=now, market_id=market_id, checkpoint=checkpoint,
-                time_remaining=remaining, midpoint=midpoint, depth_imbalance=None,
+                time_remaining=remaining, minutes_remaining=remaining / 60.0,
+                midpoint=midpoint, market_up_probability=midpoint, depth_imbalance=None,
+                market_probability_change=float(odds_change or 0.0),
+                btc_consensus_move=float(move or 0.0), agreeing_exchange_count=len(exchanges),
+                prediction_source=prediction_source,
                 exchange_moved=",".join(exchanges) if exchanges else "none",
                 polymarket_delay=max(0.0, now - self.opportunity_detector.last_polymarket_change),
                 price_difference=move_abs, confidence=confidence, direction=direction,
@@ -150,8 +154,8 @@ class TradingBot:
             )
             d = self.decision_connectome.predict(snapshot, role="decision")
             r = self.research_connectome.predict(snapshot, role="research")
-            self.decision_connectome.record_scan_observation(snapshot, role="decision")
-            self.research_connectome.record_scan_observation(snapshot, role="research")
+            self.decision_connectome.record_scan_observation(snapshot, role="decision", forecast_probability=d["probability"])
+            self.research_connectome.record_scan_observation(snapshot, role="research", forecast_probability=r["probability"])
             logger.info(
                 "CONNECTOME_SCAN market=%s checkpoint=%s remaining=%.1fs midpoint=%.4f "
                 "btc_move_pct=%.4f direction=%s raw_score=%.3f decision_p=%.3f "
@@ -201,9 +205,6 @@ class TradingBot:
         trade = await self.trade_executor.execute_opportunity(opportunity)
         if not trade:
             return
-        event_id = self.decision_connectome.record_signal(opportunity, role="decision")
-        opportunity.connectome_event_id = event_id
-        self.research_connectome.record_signal(opportunity, role="research")
         logger.info(
             "PAPER_POSITION_OPEN id=%s market=%s entry=%.4f stake=$%.2f; settlement pending",
             trade.id, trade.market_id, trade.executed_price or trade.expected_price, trade.amount,
@@ -214,18 +215,6 @@ class TradingBot:
             self.stats["trades_executed"] += 1
         if trade.resolved and trade.profit_loss is not None:
             self.stats["total_profit"] = self.trade_executor.stats.total_profit
-            event_id = getattr(trade.opportunity, "connectome_event_id", None)
-            if event_id:
-                # Final binary settlement only; never train from an open/pending trade.
-                won = float(trade.profit_loss) > 0.0
-                self.decision_connectome.settle(event_id, won)
-                self.research_connectome.settle(event_id, won)
-                logger.info(
-                    "CONNECTOME_SETTLED event=%s won=%s decision=%s research=%s",
-                    event_id, won,
-                    self.decision_connectome.stats()["settled_observations"],
-                    self.research_connectome.stats()["settled_observations"],
-                )
         pnl = f"${trade.profit_loss:.2f}" if trade.resolved and trade.profit_loss is not None else "unsettled"
         logger.info(
             "PAPER_TRADE_UPDATE id=%s status=%s pnl=%s realized_total=$%.2f",
