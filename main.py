@@ -90,7 +90,7 @@ class TradingBot:
                 },
                 "research": {
                     "max_nodes": 1_000_000, "max_edges": 1_000_000,
-                    "min_samples_for_gate": 20, "learning_rate": 0.03,
+                    "min_samples_for_gate": 1, "learning_rate": 0.03,
                 },
             },
         }
@@ -113,14 +113,22 @@ class TradingBot:
         if not (0 < remaining <= 900):
             return
         market_id = str(point.market_id)
+        # Reload checkpoint history from each graph's durable observation store so
+        # worker restarts do not make an already-recorded checkpoint look new.
         seen = self.scan_checkpoints_seen.setdefault(market_id, set())
+        seen.update(self.decision_connectome.observed_checkpoints(market_id))
+        seen.update(self.research_connectome.observed_checkpoints(market_id))
         previous_snapshot = self.last_connectome_snapshot_at.get(market_id, 0.0)
         previous_remaining = self.last_connectome_remaining.get(market_id, remaining)
         checkpoints = []
         if "first_seen" not in seen:
             checkpoints.append("first_seen")
+        # Use both threshold crossings and a small absolute-time window. This
+        # tolerates scan jitter without fabricating a checkpoint long after it passed.
         for label, seconds in (("10m", 600), ("5m", 300), ("3m", 180), ("1m", 60)):
-            if label not in seen and previous_remaining > seconds >= remaining:
+            crossed = previous_remaining > seconds >= remaining
+            inside_window = seconds - 25.0 < remaining <= seconds
+            if label not in seen and (crossed or inside_window):
                 checkpoints.append(label)
         continuous_due = now - previous_snapshot >= 10.0
         self.last_connectome_remaining[market_id] = remaining
