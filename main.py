@@ -85,7 +85,7 @@ class TradingBot:
             "connectomes": {
                 "decision": {
                     "max_nodes": 1_000_000, "max_edges": 1_000_000,
-                    "min_samples_for_gate": 20, "min_learned_probability": 0.50,
+                    "min_samples_for_gate": 1, "min_learned_probability": 0.50,
                     "learning_rate": 0.03,
                 },
                 "research": {
