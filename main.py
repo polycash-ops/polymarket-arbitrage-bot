@@ -476,6 +476,20 @@ class TradingBot:
             "stats": self.stats,
             "performance": performance,
             "latest_prices": {exchange: point.price for exchange, point in latest_prices.items()},
+            "latest_polymarket_quotes": {
+                exchange: {
+                    "market_id": point.market_id, "question": point.question,
+                    "bid": point.bid, "ask": point.ask,
+                    "midpoint": ((float(point.bid) + float(point.ask)) / 2.0
+                                 if point.bid is not None and point.ask is not None else point.price),
+                    "price": point.price, "timestamp": point.timestamp,
+                    "end_time": point.end_time,
+                    "remaining_seconds": max(0.0, float(point.end_time) - time.time()) if point.end_time else None,
+                }
+                for exchange, point in latest_prices.items()
+                if exchange in {"polymarket", "polymarket_hourly"}
+            },
+            "snapshot_cadence_seconds": 5,
             "price_spreads": self.market_monitor.get_price_spread(),
             "connectomes": {
                 "decision": self.decision_connectome.stats(),
