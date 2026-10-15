@@ -4,6 +4,7 @@ Enhances opportunity detection with advanced pattern recognition
 """
 import asyncio
 import json
+import time
 from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
 import logging
