@@ -210,7 +210,7 @@ class OpportunityDetector:
         ideal_delay = min(8.0, self.max_delay)
         delay_score = max(0.0, 1.0 - abs(delay - ideal_delay) / max(ideal_delay, 1.0)) * 0.25
         lag_score = (1.0 - min(abs(quote_change) / max(self.max_probability_followthrough, 0.005), 1.0)) * 0.2
-        consensus_score = min(agreeing_exchanges / 3.0, 1.0) * 0.15
+        consensus_score = min(agreeing_exchanges / max(self.min_consensus_exchanges, 1), 1.0) * 0.15
         return min(move_score + delay_score + lag_score + consensus_score, 1.0)
 
     def _assess_risk(self, confidence: float, delay: float) -> str:
