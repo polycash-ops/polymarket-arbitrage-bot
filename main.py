@@ -91,13 +91,9 @@ class TradingBot:
                 'risk_per_trade': 0.02,
                 'max_daily_trades': 50
             },
-            'ai_analysis': {
-                'ai_buffer_size': 100,
-                'ai_analysis_interval': 30
-            },
-            'self_improvement': {
-                'improvement_analysis_interval': 3600,
-                'min_trades_for_analysis': 20
+            'connectomes': {
+                'decision': {'max_nodes': 1000000, 'max_edges': 1000000, 'min_samples_for_gate': 20, 'min_learned_probability': 0.50},
+                'research': {'max_nodes': 1000000, 'max_edges': 1000000, 'min_samples_for_gate': 20}
             }
         }
         
@@ -194,7 +190,7 @@ class TradingBot:
 
     async def start(self):
         """Start the trading bot"""
-        logger.info("🚀 Starting AI-Enhanced Trading Bot...")
+        logger.info("🚀 Starting Connectome paper research bot...")
         
         try:
             # Start all components
@@ -269,7 +265,7 @@ class TradingBot:
 
 async def main():
     """Main entry point"""
-    parser = argparse.ArgumentParser(description='AI-Enhanced Polymarket Arbitrage Bot')
+    parser = argparse.ArgumentParser(description='Connectome Polymarket Arbitrage Research Bot')
     parser.add_argument('--config', default='config.yaml', help='Configuration file path')
     parser.add_argument('--paper-trading', action='store_true', 
                        help='Run in paper trading mode (recommended)')
