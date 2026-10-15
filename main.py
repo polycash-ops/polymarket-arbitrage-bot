@@ -155,10 +155,14 @@ class TradingBot:
         if trade.resolved and trade.profit_loss is not None:
             self.stats['total_profit'] = self.trade_executor.stats.total_profit
             
+        pnl_text = (
+            f"${trade.profit_loss:.2f}"
+            if trade.resolved and trade.profit_loss is not None
+            else "unsettled"
+        )
         logger.info(
-            f"💰 TRADE RESULT: {trade.id} - "
-            f"P&L: ${trade.profit_loss:.2f}, "
-            f"Total: ${self.stats['total_profit']:.2f}"
+            "PAPER TRADE UPDATE id=%s status=%s P/L=%s realized_total=$%.2f",
+            trade.id, trade.status.value, pnl_text, self.stats["total_profit"]
         )
         
         # Trigger self-improvement analysis with recent trades
