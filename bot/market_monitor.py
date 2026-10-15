@@ -37,6 +37,7 @@ class MarketMonitor:
         self.running = False
         self.session: Optional[aiohttp.ClientSession] = None
         self.polymarket_market_key: Optional[str] = None
+        self.scan_count = 0
 
     def add_callback(self, callback):
         """Add callback for price updates."""
@@ -161,6 +162,7 @@ class MarketMonitor:
                 if not self.session:
                     await asyncio.sleep(1)
                     continue
+                self.scan_count += 1
                 now = time.time()
                 now_dt = datetime.fromtimestamp(now, timezone.utc)
                 window_minute = (now_dt.minute // 15) * 15
