@@ -41,6 +41,7 @@ class TradingBot:
         self.scan_checkpoints_seen = {}
         self.last_market_quote_by_id = {}
         self.last_quote_change_by_id = {}
+        self.latest_analysis_forecasts = {}
         self.last_connectome_snapshot_at = {}
         self.last_connectome_remaining = {}
         self.stats = {
@@ -313,6 +314,14 @@ class TradingBot:
             snapshot, role="analysis", forecast_probability=analysis["probability"],
             forecast_up_probability=analysis["up_probability"],
         )
+        self.latest_analysis_forecasts[market_horizon] = {
+            "market_id": market_id, "market_horizon": market_horizon,
+            "observed_at": now, "end_time": float(point.end_time),
+            "remaining_seconds": remaining, "market_midpoint": midpoint,
+            "analysis_up_probability": analysis["up_probability"],
+            "analysis_direction": "UP" if analysis["up_probability"] >= 0.5 else "DOWN",
+            "analysis_samples": analysis["samples"],
+        }
         logger.info(
             "CONNECTOME_SCAN horizon=%s market=%s checkpoint=%s remaining=%.1fs midpoint=%.4f "
             "odds_change_10s=%.4f btc_move_pct=%.4f direction=%s exchanges=%s "
@@ -334,6 +343,9 @@ class TradingBot:
         self.scan_checkpoints_seen.pop(market_id, None)
         self.last_market_quote_by_id.pop(market_id, None)
         self.last_quote_change_by_id.pop(market_id, None)
+        for horizon, forecast in list(self.latest_analysis_forecasts.items()):
+            if forecast.get("market_id") == market_id:
+                self.latest_analysis_forecasts.pop(horizon, None)
         logger.info(
             "CONNECTOME_MARKET_LABEL market=%s actual_up=%s decision_labels=%d research_labels=%d analysis_labels=%d",
             market_id, actual_up, d_count, r_count, a_count,
@@ -524,6 +536,7 @@ class TradingBot:
                 if exchange in {"polymarket", "polymarket_1h"}
             },
             "snapshot_cadence_seconds": 5,
+            "latest_analysis_forecasts": self.latest_analysis_forecasts,
             "price_spreads": self.market_monitor.get_price_spread(),
             "connectomes": {
                 "decision": self.decision_connectome.stats(),
