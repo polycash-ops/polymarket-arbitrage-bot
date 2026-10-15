@@ -191,84 +191,84 @@ class MarketMonitor:
                             result = await response.json()
                             data = result if isinstance(result, list) else []
                 candidates = []
-                        for market in data if isinstance(data, list) else []:
-                            if not isinstance(market, dict):
-                                continue
-                            question = str(market.get("question") or "")
-                            slug = str(market.get("slug") or "")
-                            q = question.lower()
-                            s = slug.lower()
-                            # Keep this strategy tied to the intended short-dated BTC Up/Down contract.
-                            is_15m = ("15m" in s and ("btc" in s or "bitcoin" in s)) or (
-                                ("up or down" in q or ("up" in q and "down" in q))
-                                and ("bitcoin" in q or "btc" in q)
-                                and ("15 minute" in q or "15m" in q)
-                            )
-                            if not is_15m:
-                                continue
-                            raw_end = market.get("endDate") or market.get("endDateIso") or market.get("end_date")
-                            end_time = None
-                            if raw_end:
-                                try:
-                                    end_time = datetime.fromisoformat(str(raw_end).replace("Z", "+00:00")).timestamp()
-                                except (TypeError, ValueError):
-                                    pass
-                            if end_time is not None and end_time <= now:
-                                continue
-                            outcomes = self._as_list(market.get("outcomes"))
-                            prices = self._as_list(market.get("outcomePrices"))
-                            if not prices or len(prices) < 2:
-                                continue
-                            try:
-                                first_price = float(prices[0])
-                                second_price = float(prices[1])
-                            except (TypeError, ValueError):
-                                continue
-                            if not (0 <= first_price <= 1 and 0 <= second_price <= 1):
-                                continue
-                            # Normalize the market to an Up-probability quote, regardless
-                            # of the order in Gamma's outcomes array.
-                            first_name = str(outcomes[0]).lower() if outcomes else "up"
-                            second_name = str(outcomes[1]).lower() if len(outcomes) > 1 else "down"
-                            if "down" in first_name and "up" in second_name:
-                                up_price = second_price
-                                outcome_order = "down_first"
-                            else:
-                                up_price = first_price
-                                outcome_order = "up_first"
-                            candidates.append((end_time or float("inf"), market, up_price, outcomes, outcome_order))
-                        if candidates:
-                            candidates.sort(key=lambda item: item[0])
-                            end_time, market, up_price, outcomes, outcome_order = candidates[0]
-                            slug = str(market.get("slug") or market.get("id") or "")
-                            question = str(market.get("question") or "BTC Up or Down 15m")
-                            try:
-                                volume = float(market.get("volume") or 0)
-                            except (TypeError, ValueError):
-                                volume = 0.0
-                            bid = ask = None
-                            try:
-                                raw_bid = float(market["bestBid"]) if market.get("bestBid") is not None else None
-                                raw_ask = float(market["bestAsk"]) if market.get("bestAsk") is not None else None
-                                if outcome_order == "down_first":
-                                    bid = 1.0 - raw_ask if raw_ask is not None else None
-                                    ask = 1.0 - raw_bid if raw_bid is not None else None
-                                else:
-                                    bid, ask = raw_bid, raw_ask
-                            except (TypeError, ValueError):
-                                bid = ask = None
-                            point = PricePoint(
-                                exchange="polymarket", price=up_price, timestamp=now,
-                                volume=volume, bid=bid, ask=ask, market_id=slug,
-                                question=question, end_time=None if end_time == float("inf") else end_time
-                            )
-                            self.prices["polymarket"] = point
-                            self.polymarket_market_key = slug
-                            # Publish every poll: the detector needs to distinguish a fresh poll
-                            # from a probability that has remained unchanged.
-                            await self._notify_callbacks("polymarket", point)
+                for market in data if isinstance(data, list) else []:
+                    if not isinstance(market, dict):
+                        continue
+                    question = str(market.get("question") or "")
+                    slug = str(market.get("slug") or "")
+                    q = question.lower()
+                    s = slug.lower()
+                    # Keep this strategy tied to the intended short-dated BTC Up/Down contract.
+                    is_15m = ("15m" in s and ("btc" in s or "bitcoin" in s)) or (
+                        ("up or down" in q or ("up" in q and "down" in q))
+                        and ("bitcoin" in q or "btc" in q)
+                        and ("15 minute" in q or "15m" in q)
+                    )
+                    if not is_15m:
+                        continue
+                    raw_end = market.get("endDate") or market.get("endDateIso") or market.get("end_date")
+                    end_time = None
+                    if raw_end:
+                        try:
+                            end_time = datetime.fromisoformat(str(raw_end).replace("Z", "+00:00")).timestamp()
+                        except (TypeError, ValueError):
+                            pass
+                    if end_time is not None and end_time <= now:
+                        continue
+                    outcomes = self._as_list(market.get("outcomes"))
+                    prices = self._as_list(market.get("outcomePrices"))
+                    if not prices or len(prices) < 2:
+                        continue
+                    try:
+                        first_price = float(prices[0])
+                        second_price = float(prices[1])
+                    except (TypeError, ValueError):
+                        continue
+                    if not (0 <= first_price <= 1 and 0 <= second_price <= 1):
+                        continue
+                    # Normalize the market to an Up-probability quote, regardless
+                    # of the order in Gamma's outcomes array.
+                    first_name = str(outcomes[0]).lower() if outcomes else "up"
+                    second_name = str(outcomes[1]).lower() if len(outcomes) > 1 else "down"
+                    if "down" in first_name and "up" in second_name:
+                        up_price = second_price
+                        outcome_order = "down_first"
+                    else:
+                        up_price = first_price
+                        outcome_order = "up_first"
+                    candidates.append((end_time or float("inf"), market, up_price, outcomes, outcome_order))
+                if candidates:
+                    candidates.sort(key=lambda item: item[0])
+                    end_time, market, up_price, outcomes, outcome_order = candidates[0]
+                    slug = str(market.get("slug") or market.get("id") or "")
+                    question = str(market.get("question") or "BTC Up or Down 15m")
+                    try:
+                        volume = float(market.get("volume") or 0)
+                    except (TypeError, ValueError):
+                        volume = 0.0
+                    bid = ask = None
+                    try:
+                        raw_bid = float(market["bestBid"]) if market.get("bestBid") is not None else None
+                        raw_ask = float(market["bestAsk"]) if market.get("bestAsk") is not None else None
+                        if outcome_order == "down_first":
+                            bid = 1.0 - raw_ask if raw_ask is not None else None
+                            ask = 1.0 - raw_bid if raw_bid is not None else None
                         else:
-                            logger.warning("No eligible active BTC 15-minute Up/Down market found")
+                            bid, ask = raw_bid, raw_ask
+                    except (TypeError, ValueError):
+                        bid = ask = None
+                    point = PricePoint(
+                        exchange="polymarket", price=up_price, timestamp=now,
+                        volume=volume, bid=bid, ask=ask, market_id=slug,
+                        question=question, end_time=None if end_time == float("inf") else end_time
+                    )
+                    self.prices["polymarket"] = point
+                    self.polymarket_market_key = slug
+                    # Publish every poll: the detector needs to distinguish a fresh poll
+                    # from a probability that has remained unchanged.
+                    await self._notify_callbacks("polymarket", point)
+                else:
+                    logger.warning("No eligible active BTC 15-minute Up/Down market found")
                 await asyncio.sleep(2)
             except Exception as exc:
                 logger.error("Polymarket polling error: %s", exc)
