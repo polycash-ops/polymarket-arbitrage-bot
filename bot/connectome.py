@@ -166,6 +166,7 @@ class Connectome:
             return "flat"
         exchange_signals = {name: exchange_signal(value) for name, value in exchange_moves.items()}
         exchange_relationship = str(getattr(opportunity, "exchange_relationship", "unknown"))
+        pair_relationships = getattr(opportunity, "exchange_pair_relationships", {}) or {}
         remaining_bucket = "early" if remaining > 600 else "mid" if remaining > 300 else "late" if remaining > 60 else "expiry"
         midpoint_bucket = "low" if midpoint < 0.35 else "lean_down" if midpoint < 0.48 else "balanced" if midpoint <= 0.52 else "lean_up" if midpoint <= 0.65 else "high"
         depth_bucket = "unknown" if depth is None else "sell_heavy" if float(depth) < -0.2 else "balanced" if float(depth) <= 0.2 else "buy_heavy"
@@ -181,6 +182,9 @@ class Connectome:
             "coinbase_signal": exchange_signals["coinbase"],
             "kraken_signal": exchange_signals["kraken"],
             "exchange_relationship": exchange_relationship,
+            "binance_coinbase_relation": str(pair_relationships.get("binance_coinbase", "unknown")),
+            "binance_kraken_relation": str(pair_relationships.get("binance_kraken", "unknown")),
+            "coinbase_kraken_relation": str(pair_relationships.get("coinbase_kraken", "unknown")),
             "direction": direction,
             "action": action,
             "move": move_bucket,
@@ -219,6 +223,9 @@ class Connectome:
                 "coinbase_signal": exchange_signals["coinbase"],
                 "kraken_signal": exchange_signals["kraken"],
                 "exchange_relationship": exchange_relationship,
+                "binance_coinbase_relation": str(pair_relationships.get("binance_coinbase", "unknown")),
+                "binance_kraken_relation": str(pair_relationships.get("binance_kraken", "unknown")),
+                "coinbase_kraken_relation": str(pair_relationships.get("coinbase_kraken", "unknown")),
                 "action": action,
             }
         # Preserve exact values in each observation row for audit and calibration,
@@ -231,6 +238,10 @@ class Connectome:
             "_snapshot_time_remaining_seconds": round(remaining, 3),
             "_snapshot_delay_seconds": round(delay, 3),
             "_snapshot_btc_move": round(move, 6),
+            "_snapshot_binance_move": round(float(exchange_moves["binance"]), 6) if exchange_moves["binance"] is not None else None,
+            "_snapshot_coinbase_move": round(float(exchange_moves["coinbase"]), 6) if exchange_moves["coinbase"] is not None else None,
+            "_snapshot_kraken_move": round(float(exchange_moves["kraken"]), 6) if exchange_moves["kraken"] is not None else None,
+            "_snapshot_exchange_relationship": exchange_relationship,
             "_snapshot_direction": direction,
         })
         return base
