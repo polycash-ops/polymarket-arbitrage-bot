@@ -33,6 +33,7 @@ class Opportunity:
     yes_ask: Optional[float] = None
     market_end_time: Optional[float] = None
     estimated_edge_probability: float = 0.0
+    yes_outcome_index: int = 0
 
 
 @dataclass
@@ -197,6 +198,7 @@ class OpportunityDetector:
             yes_ask=yes_ask,
             market_end_time=current_market.end_time,
             estimated_edge_probability=edge,
+            yes_outcome_index=current_market.yes_outcome_index,
         )
         logger.info(
             "OPPORTUNITY DETECTED market=%s direction=%s btc_move=%.4f%% "
