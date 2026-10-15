@@ -168,36 +168,48 @@ class Connectome:
 
     def predict(self, opportunity: Any, role: str = "decision") -> Dict[str, Any]:
         features = self._features(opportunity, role)
-        wins = losses = 0
+        node_probabilities = []
         evidence_nodes = 0
         weighted_sum = weight_total = 0.0
         with self._connect() as con:
+            total_row = con.execute(
+                "SELECT COUNT(*) AS n, COALESCE(SUM(outcome),0) AS wins "
+                "FROM observations WHERE outcome IS NOT NULL"
+            ).fetchone()
+            samples = int(total_row["n"])
+            total_wins = int(total_row["wins"])
             for kind, signature in features.items():
                 row = con.execute(
                     "SELECT wins,losses FROM nodes WHERE kind=? AND signature=?",
                     (kind, signature),
                 ).fetchone()
                 if row:
-                    wins += int(row["wins"])
-                    losses += int(row["losses"])
+                    node_wins, node_losses = int(row["wins"]), int(row["losses"])
+                    node_samples = node_wins + node_losses
+                    if node_samples:
+                        node_probabilities.append((node_wins + 1.0) / (node_samples + 2.0))
                     evidence_nodes += 1
-            for (kind_a, sig_a), (kind_b, sig_b) in zip(list(features.items()), list(features.items())[1:]):
+            items = list(features.items())
+            for (kind_a, sig_a), (kind_b, sig_b) in zip(items, items[1:]):
                 a = con.execute("SELECT node_id FROM nodes WHERE kind=? AND signature=?", (kind_a, sig_a)).fetchone()
                 b = con.execute("SELECT node_id FROM nodes WHERE kind=? AND signature=?", (kind_b, sig_b)).fetchone()
                 if a and b:
-                    edge = con.execute("SELECT weight,updates FROM edges WHERE source_id=? AND target_id=?",
-                                       (a["node_id"], b["node_id"])).fetchone()
+                    edge = con.execute(
+                        "SELECT weight,updates FROM edges WHERE source_id=? AND target_id=?",
+                        (a["node_id"], b["node_id"]),
+                    ).fetchone()
                     if edge and int(edge["updates"]) > 0:
                         weight = min(1.0, float(edge["updates"]) / 20.0)
                         weighted_sum += (float(edge["weight"]) + 1.0) / 2.0 * weight
                         weight_total += weight
-        samples = wins + losses
-        # Beta(1,1) prior: honest uncertainty when evidence is sparse.
-        posterior = (wins + 1.0) / (samples + 2.0)
+        # Count each settled paper trade once; feature-node visits are not independent samples.
+        global_probability = (total_wins + 1.0) / (samples + 2.0)
+        node_probability = sum(node_probabilities) / len(node_probabilities) if node_probabilities else global_probability
+        probability = 0.6 * node_probability + 0.4 * global_probability if node_probabilities else global_probability
         if weight_total:
-            posterior = 0.75 * posterior + 0.25 * (weighted_sum / weight_total)
+            probability = 0.8 * probability + 0.2 * (weighted_sum / weight_total)
         return {
-            "probability": round(min(0.999, max(0.001, posterior)), 6),
+            "probability": round(min(0.999, max(0.001, probability)), 6),
             "samples": samples,
             "evidence_nodes": evidence_nodes,
             "ready_for_gate": samples >= self.min_samples_for_gate,
