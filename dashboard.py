@@ -89,6 +89,15 @@ h1{font-size:clamp(1.5rem,4vw,2.2rem);line-height:1.15;margin:0 0 8px;letter-spa
  </div>
  <p class="small">Each graph supports up to 1,000,000 nodes and 1,000,000 edges. Agents are in forecast-only mode: no paper or live trades are opened. Accuracy updates whenever a new snapshot is recorded and is scored once its contract settles. Pending snapshots are excluded from accuracy until verified settlement.</p>
 </section>
+<section class="section panel"><div class="panel-inner">
+ <div class="section-head"><h2>Overlapping Trend Analysis Connectome</h2><span class="small">Independent graph · 1,000,000-node capacity · 5-second snapshot cadence</span></div>
+ <div class="grid-two">
+  <div><div class="metric-label">Analysis graph nodes / capacity</div><div class="metric" id="analysisNodes">—</div><div class="metric-label">Edges / capacity</div><div id="analysisEdges" style="font-weight:700">—</div></div>
+  <div><div class="metric-label">Recorded snapshots</div><div class="metric" id="analysisObservations">—</div><div class="metric-label">Verified settlements / forecast accuracy</div><div id="analysisSettled" style="font-weight:700">Awaiting verified settlements</div><div class="metric-label">Model Brier vs market midpoint Brier</div><div id="analysisBrier" style="font-weight:700">—</div></div>
+ </div>
+ <p class="small">The analysis graph scores directional forecasts against each contract's verified close. It samples quote changes on the dashboard's 5-second refresh cadence and keeps 15-minute and hourly contracts separate by market ID and end timestamp. Order-book depth is marked unavailable until a genuine depth feed is connected; it is never inferred from bid/ask quotes.</p>
+ <div class="table-wrap"><table><thead><tr><th>Contract horizon</th><th>Market / close</th><th>Bid</th><th>Ask</th><th>Midpoint</th><th>Time to close</th></tr></thead><tbody id="polymarketQuoteRows"><tr><td colspan="6" class="empty">Waiting for Polymarket quotes</td></tr></tbody></table></div>
+</div></section>
 <section class="section">
  <div class="section-head"><h2>Market data</h2><span class="small">Latest observed exchange prices</span></div>
  <div class="feed">
@@ -113,7 +122,12 @@ function put(id,value){const node=el(id);if(node)node.textContent=value}
 function paintConnectomes(graphs){
  const fmt=n=>num(n)===null?"—":Math.trunc(num(n)).toLocaleString("en-US");
  const rate=g=>num(g&&g.win_rate)===null?"Not yet measured":pct(g.win_rate);
- const d=graphs&&graphs.decision||{},r=graphs&&graphs.research||{};
+ const d=graphs&&graphs.decision||{},r=graphs&&graphs.research||{},a=graphs&&graphs.analysis||{};
+ put("analysisNodes",fmt(a.nodes_active)+" / "+fmt(a.node_capacity));
+ put("analysisEdges",fmt(a.edges_active)+" / "+fmt(a.edge_capacity));
+ put("analysisObservations",fmt(a.observations));
+ put("analysisSettled",fmt(a.settled_observations)+" settled · "+rate(a));
+ put("analysisBrier",(num(a.brier_score)===null?"—":Number(a.brier_score).toFixed(3))+" vs "+(num(a.market_baseline_brier)===null?"—":Number(a.market_baseline_brier).toFixed(3)));
  put("decisionNodes",fmt(d.nodes_active)+" / "+fmt(d.node_capacity));put("decisionEdges",fmt(d.edges_active)+" / "+fmt(d.edge_capacity));
  put("decisionLearning",fmt(d.settled_observations)+" settled · "+rate(d));
  put("researchNodes",fmt(r.nodes_active)+" / "+fmt(r.node_capacity));put("researchEdges",fmt(r.edges_active)+" / "+fmt(r.edge_capacity));
@@ -182,10 +196,23 @@ function drawProfitCurve(points){
  const last=points[points.length-1];put("curveSummary",Math.max(0,points.length-1)+" settled trades · latest balance "+money(last.balance)+" · realized P/L "+money(last.profit));
  ctx.fillStyle="#9aabc0";ctx.fillText(points[0].label||"Start",pad.l,height-7);const endLabel=points[points.length-1].label||"Latest";ctx.fillText(endLabel,Math.max(pad.l,width-pad.r-ctx.measureText(endLabel).width),height-7);
 }
+function paintPolymarketQuotes(quotes){
+ const body=el("polymarketQuoteRows");if(!body)return;body.replaceChildren();
+ const horizons=[["15m","polymarket"],["1h","polymarket_hourly"]];
+ horizons.forEach(([label,key])=>{
+  const q=quotes[key],tr=document.createElement("tr");
+  const close=q&&num(q.end_time)!==null?new Date(num(q.end_time)*1000).toLocaleString("en-US",{timeZone:"America/New_York",hour:"2-digit",minute:"2-digit",second:"2-digit"}):"—";
+  const remaining=q?duration(q.remaining_seconds):"—";
+  const vals=[label,q?(String(q.market_id||"—")+" · "+close):"Not currently detected",
+   q?pct(q.bid):"—",q?pct(q.ask):"—",q?pct(q.midpoint):"—",remaining];
+  vals.forEach(v=>{const td=document.createElement("td");td.textContent=String(v);tr.appendChild(td)});body.appendChild(tr);
+ });
+}
 async function refresh(){
  try{
   const response=await fetch("/api/status?ts="+Date.now(),{cache:"no-store"});if(!response.ok)throw new Error("Status endpoint returned HTTP "+response.status);
   const d=await response.json(),s=d.stats||{},p=d.performance||{},prices=d.latest_prices||{},sp=d.price_spreads||{};
+  paintPolymarketQuotes(d.latest_polymarket_quotes||{});
   el("error").style.display="none";put("balance","DISABLED");put("profit","—");
   put("todayProfit","Settled P/L only");put("tradesCount","DISABLED");
   put("winRate","Forecast-only phase · no positions opened");
