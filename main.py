@@ -40,6 +40,7 @@ class TradingBot:
         self.analysis_connectome = Connectome("analysis", graph_config.get("analysis", {}))
         self.scan_checkpoints_seen = {}
         self.last_market_quote_by_id = {}
+        self.last_quote_change_by_id = {}
         self.last_connectome_snapshot_at = {}
         self.last_connectome_remaining = {}
         self.stats = {
@@ -230,6 +231,13 @@ class TradingBot:
         self.last_market_quote_by_id[market_id] = {
             "timestamp": now, "bid": float(point.bid), "ask": float(point.ask), "midpoint": midpoint
         }
+        self.last_quote_change_by_id[market_id] = {
+            **quote_changes,
+            "depth_imbalance": getattr(point, "depth_imbalance", None),
+            "bid_depth": getattr(point, "bid_depth", None),
+            "ask_depth": getattr(point, "ask_depth", None),
+            "observed_at": now,
+        }
         # Read recent stored observations to derive same-contract movement windows.
         # Read prior snapshots for this exact contract. Two hours of lookback is
         # required to find a quote at least one hour old without mixing contracts.
@@ -325,6 +333,7 @@ class TradingBot:
         a_count = self.analysis_connectome.settle_market(market_id, actual_up)
         self.scan_checkpoints_seen.pop(market_id, None)
         self.last_market_quote_by_id.pop(market_id, None)
+        self.last_quote_change_by_id.pop(market_id, None)
         logger.info(
             "CONNECTOME_MARKET_LABEL market=%s actual_up=%s decision_labels=%d research_labels=%d analysis_labels=%d",
             market_id, actual_up, d_count, r_count, a_count,
@@ -509,6 +518,7 @@ class TradingBot:
                     "bid_depth": getattr(point, "bid_depth", None),
                     "ask_depth": getattr(point, "ask_depth", None),
                     "market_interval": getattr(point, "market_interval", "15m"),
+                    "refresh_changes": self.last_quote_change_by_id.get(str(point.market_id), {}),
                 }
                 for exchange, point in latest_prices.items()
                 if exchange in {"polymarket", "polymarket_1h"}
