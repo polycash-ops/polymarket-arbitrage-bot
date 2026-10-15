@@ -109,10 +109,10 @@ class TradeExecutor:
             return None
         if opportunity.recommended_action == "buy_yes":
             entry_price = float(opportunity.yes_ask)
-            outcome_index = 0
+            outcome_index = int(opportunity.yes_outcome_index)
         elif opportunity.recommended_action == "buy_no":
             entry_price = 1.0 - float(opportunity.yes_bid)
-            outcome_index = 1
+            outcome_index = 1 - int(opportunity.yes_outcome_index)
         else:
             logger.info("Paper execution skipped: action is not buy_yes/buy_no")
             return None
