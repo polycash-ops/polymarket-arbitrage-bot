@@ -522,7 +522,7 @@ class Connectome:
                         (outcome, int(bool(actual_up)) if actual_up is not None else None, now, event_id))
             node_ids = []
             for kind, signature in features.items():
-                if kind.startswith("_"):
+                if kind.startswith("_") or not isinstance(signature, (str, int, float, bool)):
                     continue
                 node = con.execute("SELECT node_id FROM nodes WHERE kind=? AND signature=?", (kind, signature)).fetchone()
                 if node:
