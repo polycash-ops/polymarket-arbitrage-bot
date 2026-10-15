@@ -34,7 +34,7 @@ class Connectome:
         Path(default_dir).mkdir(parents=True, exist_ok=True)
         filename = f"{name.lower().replace(' ', '_')}.sqlite3"
         self.db_path = str(Path(default_dir) / filename)
-        self.min_samples_for_gate = max(1, int(config.get("min_samples_for_gate", 20)))
+        self.min_samples_for_gate = 1  # begin updating with the first settled observation
         self.learning_rate = min(0.25, max(0.001, float(config.get("learning_rate", 0.03))))
         self._initialize()
 
@@ -519,7 +519,7 @@ class Connectome:
                 item.pop("raw_brier_n", None)
             candidates = {
                 key: value for key, value in checkpoint_counts.items()
-                if key in {"first_seen", "10m", "5m", "3m", "1m"} and value["settled"] >= self.min_samples_for_gate
+                if key in {"first_seen", "10m", "5m", "3m", "1m"} and value["settled"] >= 1
             }
             recommended = min(
                 candidates,
@@ -547,4 +547,6 @@ class Connectome:
                 "checkpoint_performance": checkpoint_counts,
                 "recommended_checkpoint": recommended,
                 "learning": "settlement_only",
+                "checkpoint_update_policy": "every_new_snapshot; accuracy_metrics_recomputed_from_all_settled_snapshots",
+                "minimum_checkpoint_samples": 1,
             }
