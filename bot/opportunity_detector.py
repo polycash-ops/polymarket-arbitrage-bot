@@ -71,6 +71,7 @@ class OpportunityDetector:
         self.last_polymarket_price: Optional[float] = None
         self.last_market_id: Optional[str] = None
         self._latest_market_point: Optional[PricePoint] = None
+        self.signaled_markets = set()
         self.opportunities = deque(maxlen=100)
         self.callbacks = []
         self.min_price_diff = float(config.get("min_price_difference", 0.03))
@@ -137,6 +138,8 @@ class OpportunityDetector:
         if not current_market.market_id:
             logger.info("Opportunity skipped: selected Polymarket market has no ID")
             return
+        if current_market.market_id in self.signaled_markets:
+            return
         if current_market.end_time is not None and current_market.end_time <= time.time() + 5:
             logger.info("Opportunity skipped: contract is at expiry")
             return
@@ -202,6 +205,7 @@ class OpportunityDetector:
             delay, confidence, opportunity.recommended_action
         )
         self.opportunities.append(opportunity)
+        self.signaled_markets.add(current_market.market_id)
         await self._notify_callbacks(opportunity)
 
     def _calculate_confidence(self, btc_move_pct: float, delay: float,
