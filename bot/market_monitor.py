@@ -270,22 +270,37 @@ class MarketMonitor:
                         else:
                             result = await response.json()
                             data = result if isinstance(result, list) else []
+                # Always inspect the active market list so both short-dated and
+                # hourly BTC contracts can be sampled on the same refresh cadence.
+                async with self.session.get(url, params={
+                    "limit": 1000, "offset": 0, "active": "true", "closed": "false"
+                }) as response:
+                    if response.status == 200:
+                        result = await response.json()
+                        broad = result if isinstance(result, list) else []
+                        known = {str(item.get("slug") or item.get("id") or "") for item in data if isinstance(item, dict)}
+                        data.extend(item for item in broad if isinstance(item, dict) and str(item.get("slug") or item.get("id") or "") not in known)
+                    else:
+                        logger.warning("Polymarket active market listing returned HTTP %s", response.status)
+
                 candidates = []
                 for market in data if isinstance(data, list) else []:
                     if not isinstance(market, dict):
                         continue
                     question = str(market.get("question") or "")
                     slug = str(market.get("slug") or "")
-                    q = question.lower()
-                    s = slug.lower()
-                    # Keep this strategy tied to the intended short-dated BTC Up/Down contract.
-                    is_15m = ("15m" in s and ("btc" in s or "bitcoin" in s)) or (
-                        ("up or down" in q or ("up" in q and "down" in q))
-                        and ("bitcoin" in q or "btc" in q)
-                        and ("15 minute" in q or "15m" in q)
+                    q, s = question.lower(), slug.lower()
+                    is_btc = "bitcoin" in q or "btc" in q or "bitcoin" in s or "btc" in s
+                    is_directional = ("up or down" in q or ("up" in q and "down" in q))
+                    is_15m = is_btc and (
+                        ("15m" in s) or ("15 minute" in q) or ("15m" in q)
+                    ) and is_directional
+                    is_1h = is_btc and is_directional and (
+                        "1h" in s or "hourly" in s or "1 hour" in q or "hourly" in q or "one hour" in q
                     )
-                    if not is_15m:
+                    if not (is_15m or is_1h):
                         continue
+                    interval = "15m" if is_15m else "1h"
                     raw_end = market.get("endDate") or market.get("endDateIso") or market.get("end_date")
                     end_time = None
                     if raw_end:
@@ -297,31 +312,32 @@ class MarketMonitor:
                         continue
                     outcomes = self._as_list(market.get("outcomes"))
                     prices = self._as_list(market.get("outcomePrices"))
-                    if not prices or len(prices) < 2:
+                    if len(prices) < 2 or len(outcomes) < 2:
                         continue
                     try:
-                        first_price = float(prices[0])
-                        second_price = float(prices[1])
+                        first_price, second_price = float(prices[0]), float(prices[1])
                     except (TypeError, ValueError):
                         continue
                     if not (0 <= first_price <= 1 and 0 <= second_price <= 1):
                         continue
-                    # Normalize the market to an Up-probability quote, regardless
-                    # of the order in Gamma's outcomes array.
-                    first_name = str(outcomes[0]).lower() if outcomes else "up"
-                    second_name = str(outcomes[1]).lower() if len(outcomes) > 1 else "down"
+                    first_name, second_name = str(outcomes[0]).lower(), str(outcomes[1]).lower()
                     if "down" in first_name and "up" in second_name:
-                        up_price = second_price
-                        outcome_order = "down_first"
+                        up_price, outcome_order = second_price, "down_first"
                     else:
-                        up_price = first_price
-                        outcome_order = "up_first"
-                    candidates.append((end_time or float("inf"), market, up_price, outcomes, outcome_order))
-                if candidates:
-                    candidates.sort(key=lambda item: item[0])
-                    end_time, market, up_price, outcomes, outcome_order = candidates[0]
+                        up_price, outcome_order = first_price, "up_first"
+                    candidates.append((end_time or float("inf"), interval, market, up_price, outcomes, outcome_order))
+
+                best_by_interval = {}
+                for candidate in candidates:
+                    _, interval, _, _, _, _ = candidate
+                    if interval not in best_by_interval or candidate[0] < best_by_interval[interval][0]:
+                        best_by_interval[interval] = candidate
+
+                if not best_by_interval:
+                    logger.warning("No eligible active BTC 15-minute/hourly Up/Down market found; Gamma rows examined=%s", len(data))
+                for end_time, interval, market, up_price, outcomes, outcome_order in best_by_interval.values():
                     slug = str(market.get("slug") or market.get("id") or "")
-                    question = str(market.get("question") or "BTC Up or Down 15m")
+                    question = str(market.get("question") or f"BTC Up or Down {interval}")
                     try:
                         volume = float(market.get("volume") or 0)
                     except (TypeError, ValueError):
@@ -338,46 +354,35 @@ class MarketMonitor:
                     except (TypeError, ValueError):
                         bid = ask = None
                     depth_imbalance = bid_depth = ask_depth = None
-                    # Gamma provides best quotes, not full depth. Pull the CLOB book
-                    # for the Up token and aggregate the first five levels.
                     token_ids = self._as_list(market.get("clobTokenIds"))
                     outcomes_for_tokens = self._as_list(market.get("outcomes"))
-                    up_index = 0
-                    if len(outcomes_for_tokens) > 1 and "down" in str(outcomes_for_tokens[0]).lower() and "up" in str(outcomes_for_tokens[1]).lower():
-                        up_index = 1
+                    up_index = 1 if len(outcomes_for_tokens) > 1 and "down" in str(outcomes_for_tokens[0]).lower() and "up" in str(outcomes_for_tokens[1]).lower() else 0
                     if len(token_ids) > up_index and now - self._last_depth_fetch.get(slug, 0.0) >= 5.0:
                         self._last_depth_fetch[slug] = now
                         try:
-                            async with self.session.get(
-                                "https://clob.polymarket.com/book",
-                                params={"token_id": str(token_ids[up_index])},
-                            ) as book_response:
+                            async with self.session.get("https://clob.polymarket.com/book", params={"token_id": str(token_ids[up_index])}) as book_response:
                                 if book_response.status == 200:
                                     book = await book_response.json()
-                                    bids = book.get("bids") or []
-                                    asks = book.get("asks") or []
+                                    bids, asks = book.get("bids") or [], book.get("asks") or []
                                     bid_depth = sum(float(level.get("size", 0) or 0) for level in bids[:5] if isinstance(level, dict))
                                     ask_depth = sum(float(level.get("size", 0) or 0) for level in asks[:5] if isinstance(level, dict))
                                     total_depth = bid_depth + ask_depth
-                                    depth_imbalance = ((bid_depth - ask_depth) / total_depth) if total_depth > 0 else None
+                                    depth_imbalance = (bid_depth - ask_depth) / total_depth if total_depth > 0 else None
                         except Exception as depth_error:
                             logger.debug("CLOB depth unavailable for %s: %s", slug, depth_error)
                     point = PricePoint(
-                        exchange="polymarket", price=up_price, timestamp=now,
-                        volume=volume, bid=bid, ask=ask, market_id=slug,
-                        question=question, end_time=None if end_time == float("inf") else end_time,
+                        exchange="polymarket", price=up_price, timestamp=now, volume=volume,
+                        bid=bid, ask=ask, market_id=slug, question=question,
+                        end_time=None if end_time == float("inf") else end_time,
                         yes_outcome_index=1 if outcome_order == "down_first" else 0,
                         depth_imbalance=depth_imbalance, bid_depth=bid_depth, ask_depth=ask_depth,
-                        market_interval="15m"
+                        market_interval=interval
                     )
-                    self.prices["polymarket"] = point
-                    self.polymarket_market_key = slug
-                    # Publish every poll: the detector needs to distinguish a fresh poll
-                    # from a probability that has remained unchanged.
-                    await self._notify_callbacks("polymarket", point)
-                else:
-                    logger.warning("No eligible active BTC 15-minute Up/Down market found; Gamma rows examined=%s", len(data))
-                await asyncio.sleep(2)
+                    self.prices["polymarket" if interval == "15m" else "polymarket_1h"] = point
+                    if interval == "15m":
+                        self.polymarket_market_key = slug
+                    await self._notify_callbacks("polymarket" if interval == "15m" else "polymarket_1h", point)
+                await asyncio.sleep(5)
             except Exception as exc:
                 logger.error("Polymarket polling error: %s", exc)
                 await asyncio.sleep(5)
