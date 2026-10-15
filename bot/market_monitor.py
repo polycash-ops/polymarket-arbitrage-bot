@@ -26,6 +26,7 @@ class PricePoint:
     market_id: Optional[str] = None
     question: Optional[str] = None
     end_time: Optional[float] = None
+    yes_outcome_index: int = 0
 
 
 class MarketMonitor:
