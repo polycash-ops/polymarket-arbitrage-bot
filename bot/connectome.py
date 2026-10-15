@@ -10,6 +10,7 @@ import logging
 import os
 import sqlite3
 import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
@@ -168,12 +169,67 @@ class Connectome:
         exchange_relationship = str(getattr(opportunity, "exchange_relationship", "unknown"))
         pair_relationships = getattr(opportunity, "exchange_pair_relationships", {}) or {}
         remaining_bucket = "early" if remaining > 600 else "mid" if remaining > 300 else "late" if remaining > 60 else "expiry"
+        if remaining > 720:
+            remaining_fine = "12m_plus"
+        elif remaining > 600:
+            remaining_fine = "10m_12m"
+        elif remaining > 420:
+            remaining_fine = "7m_10m"
+        elif remaining > 300:
+            remaining_fine = "5m_7m"
+        elif remaining > 180:
+            remaining_fine = "3m_5m"
+        elif remaining > 120:
+            remaining_fine = "2m_3m"
+        elif remaining > 60:
+            remaining_fine = "1m_2m"
+        elif remaining > 30:
+            remaining_fine = "30s_1m"
+        elif remaining > 15:
+            remaining_fine = "15s_30s"
+        else:
+            remaining_fine = "under_15s"
         midpoint_bucket = "low" if midpoint < 0.35 else "lean_down" if midpoint < 0.48 else "balanced" if midpoint <= 0.52 else "lean_up" if midpoint <= 0.65 else "high"
+        if 0.40 <= midpoint <= 0.60:
+            midpoint_fine = f"near_{int(round(midpoint / 0.02) * 2):02d}_pct"
+        else:
+            midpoint_fine = f"wide_{int(midpoint * 20) * 5:02d}_pct"
+        odds_magnitude = abs(odds_change)
+        odds_change_bucket = (
+            "tiny" if odds_magnitude < 0.002 else
+            "small" if odds_magnitude < 0.005 else
+            "medium" if odds_magnitude < 0.01 else
+            "large" if odds_magnitude < 0.025 else "extreme"
+        )
+        spread_fine = (
+            "unknown" if quote_spread is None else
+            "under_1c" if quote_spread < 0.01 else
+            "1c_2c" if quote_spread < 0.02 else
+            "2c_5c" if quote_spread < 0.05 else "5c_plus"
+        )
+        def move_magnitude_bucket(value):
+            if value is None:
+                return "missing"
+            magnitude = abs(float(value))
+            return ("tiny" if magnitude < 0.001 else
+                    "small" if magnitude < 0.005 else
+                    "medium" if magnitude < 0.01 else
+                    "large" if magnitude < 0.025 else "extreme")
+        observed_timestamp = float(getattr(opportunity, "timestamp", time.time()) or time.time())
+        observed_dt = datetime.fromtimestamp(observed_timestamp, tz=timezone.utc)
+        time_of_day_bucket = f"utc_{(observed_dt.hour // 4) * 4:02d}_{((observed_dt.hour // 4) + 1) * 4:02d}"
+        weekday_bucket = observed_dt.strftime("%a").lower()
         depth_bucket = "unknown" if depth is None else "sell_heavy" if float(depth) < -0.2 else "balanced" if float(depth) <= 0.2 else "buy_heavy"
         base = {
             "checkpoint": checkpoint,
             "remaining": remaining_bucket,
+            "remaining_fine": remaining_fine,
             "midpoint": midpoint_bucket,
+            "midpoint_fine": midpoint_fine,
+            "odds_change_magnitude": odds_change_bucket,
+            "spread_fine": spread_fine,
+            "time_of_day": time_of_day_bucket,
+            "weekday": weekday_bucket,
             "depth": depth_bucket,
             "odds_momentum": odds_momentum,
             "prediction_source": source,
@@ -181,6 +237,9 @@ class Connectome:
             "binance_signal": exchange_signals["binance"],
             "coinbase_signal": exchange_signals["coinbase"],
             "kraken_signal": exchange_signals["kraken"],
+            "binance_move_magnitude": move_magnitude_bucket(exchange_moves["binance"]),
+            "coinbase_move_magnitude": move_magnitude_bucket(exchange_moves["coinbase"]),
+            "kraken_move_magnitude": move_magnitude_bucket(exchange_moves["kraken"]),
             "exchange_relationship": exchange_relationship,
             "binance_coinbase_relation": str(pair_relationships.get("binance_coinbase", "unknown")),
             "binance_kraken_relation": str(pair_relationships.get("binance_kraken", "unknown")),
@@ -486,6 +545,8 @@ class Connectome:
             directional_brier_n = 0
             raw_brier_total = 0.0
             raw_brier_n = 0
+            market_brier_total = 0.0
+            market_brier_n = 0
             for row in rows:
                 features = json.loads(row["features_json"])
                 label = int(row["outcome"])
@@ -500,14 +561,24 @@ class Connectome:
                     directional_brier_total += score
                     directional_brier_n += 1
                 forecast_up = features.get("_forecast_up_probability")
-                if forecast_up is not None and row["actual_up"] is not None:
-                    up_score = (float(forecast_up) - int(row["actual_up"])) ** 2
+                actual_up = row["actual_up"]
+                if forecast_up is not None and actual_up is not None:
+                    up_score = (float(forecast_up) - int(actual_up)) ** 2
                     bucket.setdefault("brier_sum", 0.0)
                     bucket.setdefault("brier_n", 0)
                     bucket["brier_sum"] += up_score
                     bucket["brier_n"] += 1
                     brier_total += up_score
                     brier_n += 1
+                market_prior = features.get("_snapshot_market_up_probability")
+                if market_prior is not None and actual_up is not None:
+                    market_score = (float(market_prior) - int(actual_up)) ** 2
+                    bucket.setdefault("market_brier_sum", 0.0)
+                    bucket.setdefault("market_brier_n", 0)
+                    bucket["market_brier_sum"] += market_score
+                    bucket["market_brier_n"] += 1
+                    market_brier_total += market_score
+                    market_brier_n += 1
                 raw_confidence = features.get("_raw_scan_confidence")
                 if raw_confidence is not None:
                     raw_score = (float(raw_confidence) - label) ** 2
@@ -520,10 +591,13 @@ class Connectome:
             for item in checkpoint_counts.values():
                 item["win_rate"] = round(item["wins"] / item["settled"], 6) if item["settled"] else None
                 item["brier_score"] = round(item.get("brier_sum", 0.0) / item["brier_n"], 6) if item.get("brier_n") else None
+                item["market_baseline_brier"] = round(item.get("market_brier_sum", 0.0) / item["market_brier_n"], 6) if item.get("market_brier_n") else None
                 item["directional_confidence_brier"] = round(item.get("directional_brier_sum", 0.0) / item["directional_brier_n"], 6) if item.get("directional_brier_n") else None
                 item["raw_confidence_brier"] = round(item.get("raw_brier_sum", 0.0) / item["raw_brier_n"], 6) if item.get("raw_brier_n") else None
                 item.pop("brier_sum", None)
                 item.pop("brier_n", None)
+                item.pop("market_brier_sum", None)
+                item.pop("market_brier_n", None)
                 item.pop("directional_brier_sum", None)
                 item.pop("directional_brier_n", None)
                 item.pop("raw_brier_sum", None)
@@ -552,6 +626,8 @@ class Connectome:
                 "losses": int(losses),
                 "win_rate": round(wins / settled, 6) if settled else None,
                 "brier_score": round(brier_total / brier_n, 6) if brier_n else None,
+                "market_baseline_brier": round(market_brier_total / market_brier_n, 6) if market_brier_n else None,
+                "brier_improvement_vs_market": round((market_brier_total / market_brier_n) - (brier_total / brier_n), 6) if brier_n and market_brier_n else None,
                 "directional_confidence_brier": round(directional_brier_total / directional_brier_n, 6) if directional_brier_n else None,
                 "up_probability_samples": brier_n,
                 "raw_confidence_brier": round(raw_brier_total / raw_brier_n, 6) if raw_brier_n else None,
