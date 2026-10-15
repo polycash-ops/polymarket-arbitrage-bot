@@ -37,7 +37,9 @@ class TradingBot:
         graph_config = self.config.get("connectomes", {})
         self.decision_connectome = Connectome("decision", graph_config.get("decision", {}))
         self.research_connectome = Connectome("research", graph_config.get("research", {}))
+        self.analysis_connectome = Connectome("analysis", graph_config.get("analysis", {}))
         self.scan_checkpoints_seen = {}
+        self.last_market_quote_by_id = {}
         self.last_connectome_snapshot_at = {}
         self.last_connectome_remaining = {}
         self.stats = {
@@ -130,7 +132,9 @@ class TradingBot:
             inside_window = seconds - 45.0 < remaining <= seconds
             if label not in seen and (crossed or inside_window):
                 threshold_candidates.append((label, abs(remaining - seconds)))
-        continuous_due = now - previous_snapshot >= 10.0
+        # Dashboard refreshes / market quote snapshots are sampled at 5 seconds.
+        # The Polymarket poll is faster, so this de-duplicates to that cadence.
+        continuous_due = now - previous_snapshot >= 5.0
         self.last_connectome_remaining[market_id] = remaining
         checkpoint = None
         checkpoint_labels = []
@@ -203,6 +207,37 @@ class TradingBot:
             if exchanges else 0.50
         )
         confidence = min(0.99, max(0.01, float(confidence)))
+        previous_quote = self.last_market_quote_by_id.get(market_id)
+        quote_changes = {}
+        if previous_quote:
+            elapsed = max(0.001, now - previous_quote["timestamp"])
+            for field, value in (("bid", float(point.bid)), ("ask", float(point.ask)), ("midpoint", midpoint)):
+                quote_changes[field + "_change_refresh"] = value - previous_quote[field]
+                quote_changes[field + "_change_per_second"] = (value - previous_quote[field]) / elapsed
+        else:
+            quote_changes = {
+                "bid_change_refresh": None, "ask_change_refresh": None,
+                "midpoint_change_refresh": None, "bid_change_per_second": None,
+                "ask_change_per_second": None, "midpoint_change_per_second": None,
+            }
+        self.last_market_quote_by_id[market_id] = {
+            "timestamp": now, "bid": float(point.bid), "ask": float(point.ask), "midpoint": midpoint
+        }
+        # Read recent stored observations to derive same-contract movement windows.
+        analysis_history = self.analysis_connectome.recent_market_observations(market_id, now - 3600.0)
+        def movement_from_history(field, horizon_seconds, current_value):
+            eligible = [row for row in analysis_history if now - float(row.get("timestamp", now)) >= horizon_seconds]
+            if not eligible:
+                return None
+            oldest = min(eligible, key=lambda row: float(row.get("timestamp", now)))
+            previous_value = oldest.get(field)
+            return None if previous_value is None else current_value - float(previous_value)
+        bid_move_15m = movement_from_history("bid", 900.0, float(point.bid))
+        ask_move_15m = movement_from_history("ask", 900.0, float(point.ask))
+        midpoint_move_15m = movement_from_history("midpoint", 900.0, midpoint)
+        bid_move_1h = movement_from_history("bid", 3600.0, float(point.bid))
+        ask_move_1h = movement_from_history("ask", 3600.0, float(point.ask))
+        midpoint_move_1h = movement_from_history("midpoint", 3600.0, midpoint)
         snapshot = SimpleNamespace(
             timestamp=now, market_id=market_id, checkpoint=checkpoint,
             checkpoint_labels=checkpoint_labels or [checkpoint],
@@ -221,6 +256,15 @@ class TradingBot:
             polymarket_delay=delay, price_difference=abs(move), confidence=confidence,
             direction=direction, recommended_action="buy_yes" if direction == "up" else "buy_no",
             yes_bid=float(point.bid), yes_ask=float(point.ask), market_question=point.question,
+            market_horizon="15m", market_contract_end_time=float(point.end_time),
+            bid_change_refresh=quote_changes["bid_change_refresh"],
+            ask_change_refresh=quote_changes["ask_change_refresh"],
+            midpoint_change_refresh=quote_changes["midpoint_change_refresh"],
+            bid_change_15m=bid_move_15m, ask_change_15m=ask_move_15m,
+            midpoint_change_15m=midpoint_move_15m,
+            bid_change_1h=bid_move_1h, ask_change_1h=ask_move_1h,
+            midpoint_change_1h=midpoint_move_1h,
+            order_depth_imbalance_15m=None, order_depth_imbalance_1h=None,
             market_end_time=point.end_time, expected_profit=0.0,
             yes_outcome_index=int(getattr(point, "yes_outcome_index", 0) or 0),
             connectome_event_id=f"scan:{market_id}:{int(now * 1000)}",
@@ -235,25 +279,34 @@ class TradingBot:
             snapshot, role="research", forecast_probability=research["probability"],
             forecast_up_probability=research["up_probability"],
         )
+        analysis = self.analysis_connectome.predict(snapshot, role="analysis")
+        self.analysis_connectome.record_scan_observation(
+            snapshot, role="analysis", forecast_probability=analysis["probability"],
+            forecast_up_probability=analysis["up_probability"],
+        )
         logger.info(
             "CONNECTOME_SCAN market=%s checkpoint=%s remaining=%.1fs midpoint=%.4f "
             "odds_change_10s=%.4f btc_move_pct=%.4f direction=%s exchanges=%s "
             "relationship=%s raw_score=%.3f decision_confidence=%.3f decision_up_p=%.3f decision_samples=%d "
-            "research_confidence=%.3f research_up_p=%.3f research_samples=%d paper_trade=not_required",
+            "research_confidence=%.3f research_up_p=%.3f research_samples=%d "
+            "analysis_up_p=%.3f analysis_samples=%d paper_trade=not_required",
             market_id, checkpoint, remaining, midpoint, odds_change, abs(move), direction,
             ",".join(f"{venue}:{value:+.4f}" if value is not None else f"{venue}:missing"
                      for venue, value in exchange_moves.items()),
             exchange_relationship, confidence, decision["probability"], decision["up_probability"], decision["samples"],
             research["probability"], research["up_probability"], research["samples"],
+            analysis["up_probability"], analysis["samples"],
         )
 
     async def _on_contract_settled(self, market_id: str, actual_up: bool):
         d_count = self.decision_connectome.settle_market(market_id, actual_up)
         r_count = self.research_connectome.settle_market(market_id, actual_up)
+        a_count = self.analysis_connectome.settle_market(market_id, actual_up)
         self.scan_checkpoints_seen.pop(market_id, None)
+        self.last_market_quote_by_id.pop(market_id, None)
         logger.info(
-            "CONNECTOME_MARKET_LABEL market=%s actual_up=%s decision_labels=%d research_labels=%d",
-            market_id, actual_up, d_count, r_count,
+            "CONNECTOME_MARKET_LABEL market=%s actual_up=%s decision_labels=%d research_labels=%d analysis_labels=%d",
+            market_id, actual_up, d_count, r_count, a_count,
         )
 
     async def _on_opportunity_detected(self, opportunity: Opportunity):
@@ -425,6 +478,7 @@ class TradingBot:
             "connectomes": {
                 "decision": self.decision_connectome.stats(),
                 "research": self.research_connectome.stats(),
+                "analysis": self.analysis_connectome.stats(),
             },
             "recent_opportunities": len(self.opportunity_detector.get_recent_opportunities(60)),
         }
