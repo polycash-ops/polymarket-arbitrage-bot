@@ -106,14 +106,14 @@ class TradingBot:
 
     async def _on_market_scan(self, exchange, point):
         """Continuously snapshot live contract conditions, independently of paper trades."""
-        if exchange not in {"polymarket", "polymarket_hourly"} or not point.market_id or not point.end_time:
+        if exchange not in {"polymarket", "polymarket_1h"} or not point.market_id or not point.end_time:
             return
         if point.bid is None or point.ask is None or not (0 < float(point.bid) <= float(point.ask) < 1):
             return
         now = float(point.timestamp)
         remaining = max(0.0, float(point.end_time) - now)
-        horizon_seconds = 3600 if exchange == "polymarket_hourly" else 900
-        market_horizon = "1h" if exchange == "polymarket_hourly" else "15m"
+        horizon_seconds = 3600 if exchange == "polymarket_1h" else 900
+        market_horizon = "1h" if exchange == "polymarket_1h" else "15m"
         if not (0 < remaining <= horizon_seconds):
             return
         market_id = str(point.market_id)
@@ -502,7 +502,7 @@ class TradingBot:
                     "remaining_seconds": max(0.0, float(point.end_time) - time.time()) if point.end_time else None,
                 }
                 for exchange, point in latest_prices.items()
-                if exchange in {"polymarket", "polymarket_hourly"}
+                if exchange in {"polymarket", "polymarket_1h"}
             },
             "snapshot_cadence_seconds": 5,
             "price_spreads": self.market_monitor.get_price_spread(),
