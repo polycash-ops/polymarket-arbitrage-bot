@@ -1,5 +1,5 @@
 """
-AI-Enhanced Polymarket Arbitrage Bot
+Connectome Polymarket Arbitrage Research Bot
 Main entry point - Orchestrates all components for 24/7 trading
 """
 import asyncio
@@ -15,8 +15,7 @@ from typing import Dict, Any
 from bot.market_monitor import MarketMonitor, PricePoint
 from bot.opportunity_detector import OpportunityDetector, Opportunity
 from bot.trade_executor import TradeExecutor, Trade
-from bot.ai_analyzer import AIAnalyzer, AIInsight
-from bot.self_improvement import SelfImprovement
+from bot.connectome import Connectome
 
 # Ensure the log directory exists before FileHandler is constructed.
 Path('logs').mkdir(parents=True, exist_ok=True)
@@ -41,8 +40,10 @@ class TradingBot:
         self.market_monitor = MarketMonitor(self.config.get('market_monitor', {}))
         self.opportunity_detector = OpportunityDetector(self.config.get('opportunity_detection', {}))
         self.trade_executor = TradeExecutor(self.config.get('trade_execution', {}), paper_trading)
-        self.ai_analyzer = AIAnalyzer(self.config.get('ai_analysis', {}))
-        self.self_improvement = SelfImprovement(self.config.get('self_improvement', {}))
+        connectome_config = self.config.get('connectomes', {})
+        # Separate databases, feature representations, and edge weights.
+        self.decision_connectome = Connectome('decision', connectome_config.get('decision', {}))
+        self.research_connectome = Connectome('research', connectome_config.get('research', {}))
         
         # Statistics
         self.stats = {
@@ -103,9 +104,9 @@ class TradingBot:
     def _setup_callbacks(self):
         """Setup callbacks between components"""
         
-        # Market monitor -> Opportunity detector & AI analyzer
+        # Market data feeds the deterministic signal detector. Connectomes learn from executed
+        # paper signals and only receive outcome labels after final settlement.
         self.market_monitor.add_callback(self.opportunity_detector.on_price_update)
-        self.market_monitor.add_callback(self.ai_analyzer.on_price_update)
         
         # Opportunity detector -> Trade executor (with AI enhancement)
         self.opportunity_detector.add_callback(self._on_opportunity_detected)
@@ -113,11 +114,6 @@ class TradingBot:
         # Trade executor -> Statistics & Self improvement
         self.trade_executor.add_callback(self._on_trade_executed)
         
-        # AI analyzer -> Logging
-        self.ai_analyzer.add_callback(self._on_ai_insight)
-        
-        # Self improvement -> Logging
-        self.self_improvement.add_callback(self._on_improvement_event)
         
     async def _on_opportunity_detected(self, opportunity: Opportunity):
         """Handle detected opportunities"""
@@ -128,21 +124,40 @@ class TradingBot:
         
         self.stats['opportunities_detected'] += 1
         
-        # The bundled AI analyzer is a mock, not a validated model. Do not let its
-        # hard-coded response alter confidence or cause paper fills.
-        minimum = self.config.get('opportunity_detection', {}).get('min_confidence', 0.7)
-        if opportunity.confidence >= minimum:
-            trade = await self.trade_executor.execute_opportunity(opportunity)
-            if trade:
+        # The decision Connectome can affect decisions only after it has enough settled evidence.
+        # Until then, the deterministic detector is the bootstrap policy; the research graph is
+        # independent and observational, not a second vote disguised as confidence.
+        decision_prediction = self.decision_connectome.predict(opportunity, role="decision")
+        research_prediction = self.research_connectome.predict(opportunity, role="research")
+        logger.info(
+            "CONNECTOME_SIGNAL decision_p=%.3f samples=%d research_p=%.3f samples=%d",
+            decision_prediction["probability"], decision_prediction["samples"],
+            research_prediction["probability"], research_prediction["samples"]
+        )
+        minimum = float(self.config.get('opportunity_detection', {}).get('min_confidence', 0.7))
+        learned_floor = float(self.config.get('connectomes', {}).get('decision', {}).get('min_learned_probability', 0.50))
+        if decision_prediction["ready_for_gate"]:
+            opportunity.confidence = 0.5 * float(opportunity.confidence) + 0.5 * float(decision_prediction["probability"])
+            if decision_prediction["probability"] < learned_floor:
                 logger.info(
-                    "Paper position opened id=%s market=%s entry=%.4f stake=$%.2f; "
-                    "realized P/L waits for final market settlement",
-                    trade.id, trade.market_id, trade.executed_price or trade.expected_price, trade.amount
+                    "Paper signal rejected by decision Connectome: learned probability %.3f below %.3f",
+                    decision_prediction["probability"], learned_floor
                 )
-        else:
+                return
+        if opportunity.confidence < minimum:
+            logger.info("Paper signal rejected: confidence %.3f below %.3f", opportunity.confidence, minimum)
+            return
+
+        trade = await self.trade_executor.execute_opportunity(opportunity)
+        if trade:
+            # Store graph observations only when a real-quote paper fill was created.
+            event_id = self.decision_connectome.record_signal(opportunity, role="decision")
+            opportunity.connectome_event_id = event_id
+            self.research_connectome.record_signal(opportunity, role="research")
             logger.info(
-                "Opportunity rejected before execution: confidence %.3f below %.3f",
-                opportunity.confidence, minimum
+                "Paper position opened id=%s market=%s entry=%.4f stake=$%.2f; "
+                "both Connectomes will learn only after final settlement",
+                trade.id, trade.market_id, trade.executed_price or trade.expected_price, trade.amount
             )
             
     async def _on_trade_executed(self, trade: Trade):
@@ -165,25 +180,18 @@ class TradingBot:
             trade.id, trade.status.value, pnl_text, self.stats["total_profit"]
         )
         
-        # Trigger self-improvement analysis with recent trades
-        recent_trades = self.trade_executor.get_recent_trades(24)
-        if len(recent_trades) >= self.config.get('self_improvement', {}).get('min_trades_for_analysis', 20):
-            await self.self_improvement.force_analysis(recent_trades)
-            
-    async def _on_ai_insight(self, insight: AIInsight):
-        """Handle AI insights"""
-        logger.info(
-            f"🧠 AI INSIGHT: Sentiment {insight.market_sentiment}, "
-            f"Volatility {insight.volatility_prediction:.2f}, "
-            f"Patterns: {len(insight.key_patterns)}"
-        )
-        
-    async def _on_improvement_event(self, event_data: Dict[str, Any]):
-        """Handle self-improvement events"""
-        if event_data.get('type') == 'improvement_implemented':
-            suggestion = event_data.get('suggestion', {})
-            logger.info(f"🚀 IMPROVEMENT: {suggestion.get('description', 'Unknown improvement')}")
-            
+        if trade.resolved and trade.profit_loss is not None:
+            event_id = getattr(trade.opportunity, "connectome_event_id", None)
+            if event_id:
+                won = float(trade.profit_loss) > 0.0
+                self.decision_connectome.settle(event_id, won)
+                self.research_connectome.settle(event_id, won)
+                logger.info(
+                    "CONNECTOME_SETTLED event=%s won=%s decision=%s research=%s",
+                    event_id, won, self.decision_connectome.stats()["settled_observations"],
+                    self.research_connectome.stats()["settled_observations"]
+                )
+
     async def start(self):
         """Start the trading bot"""
         logger.info("🚀 Starting AI-Enhanced Trading Bot...")
@@ -193,8 +201,6 @@ class TradingBot:
             await asyncio.gather(
                 self.market_monitor.start(),
                 self.trade_executor.start(),
-                self.ai_analyzer.start(),
-                self.self_improvement.start(),
                 self._status_loop()
             )
         except KeyboardInterrupt:
@@ -211,8 +217,6 @@ class TradingBot:
         await asyncio.gather(
             self.market_monitor.stop(),
             self.trade_executor.stop(),
-            self.ai_analyzer.stop(),
-            self.self_improvement.stop(),
             return_exceptions=True
         )
         
@@ -259,7 +263,7 @@ class TradingBot:
             'performance': performance,
             'latest_prices': {ex: p.price for ex, p in latest_prices.items()},
             'price_spreads': spreads,
-            'ai_sentiment': self.ai_analyzer.get_market_sentiment(),
+            'connectomes': {\n                'decision': self.decision_connectome.stats(),\n                'research': self.research_connectome.stats(),\n                'decision_prediction_samples': self.decision_connectome.stats()['settled_observations'],\n                'research_prediction_samples': self.research_connectome.stats()['settled_observations'],\n            },
             'recent_opportunities': len(self.opportunity_detector.get_recent_opportunities(60))
         }
 
@@ -291,7 +295,7 @@ async def main():
     bot = TradingBot(args.config, paper_trading=args.paper_trading)
     
     logger.info("🎯 Starting temporal arbitrage bot based on 0x8dxd strategy")
-    logger.info("⚔️ Enhanced with AI analysis and self-improvement")
+    logger.info("⚔️ Powered by two independent outcome-trained Connectome graphs")
     
     await bot.start()
 
