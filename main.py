@@ -131,8 +131,31 @@ class TradingBot:
         checkpoint = checkpoints[-1] if checkpoints else "continuous"
         self.last_connectome_snapshot_at[market_id] = now
 
+        # Preserve each venue as an independent signal; the graph learns which
+        # cross-exchange relationships are predictive instead of hard-coding trust.
+        exchange_moves = {}
+        for venue in ("binance", "coinbase", "kraken"):
+            venue_history = self.opportunity_detector.price_history.get(venue)
+            venue_move = venue_history.get_change_pct(30) if venue_history else None
+            exchange_moves[venue] = float(venue_move) if venue_move is not None else None
         move, exchanges = self.opportunity_detector._consensus_move()
         move = float(move or 0.0)
+        active_signs = [1 if value > 0 else -1 if value < 0 else 0
+                        for value in exchange_moves.values() if value is not None]
+        positive_count = sum(sign > 0 for sign in active_signs)
+        negative_count = sum(sign < 0 for sign in active_signs)
+        if len(active_signs) < 3:
+            exchange_relationship = "incomplete"
+        elif positive_count == 3:
+            exchange_relationship = "all_up"
+        elif negative_count == 3:
+            exchange_relationship = "all_down"
+        elif positive_count == 2:
+            exchange_relationship = "two_up_one_down"
+        elif negative_count == 2:
+            exchange_relationship = "two_down_one_up"
+        else:
+            exchange_relationship = "flat_or_mixed"
         history = self.opportunity_detector.price_history.get("polymarket")
         odds_change = float(history.get_probability_change(10) or 0.0) if history else 0.0
         midpoint = (float(point.bid) + float(point.ask)) / 2.0
@@ -150,6 +173,11 @@ class TradingBot:
             midpoint=midpoint, market_up_probability=float(point.price),
             depth_imbalance=None, market_probability_change=odds_change,
             btc_consensus_move=move, agreeing_exchange_count=len(exchanges),
+            exchange_binance_move=exchange_moves["binance"],
+            exchange_coinbase_move=exchange_moves["coinbase"],
+            exchange_kraken_move=exchange_moves["kraken"],
+            exchange_relationship=exchange_relationship,
+            exchange_positive_count=positive_count, exchange_negative_count=negative_count,
             prediction_source=prediction_source,
             exchange_moved=",".join(exchanges) if exchanges else "none",
             polymarket_delay=delay, price_difference=abs(move), confidence=confidence,
@@ -171,11 +199,13 @@ class TradingBot:
         )
         logger.info(
             "CONNECTOME_SCAN market=%s checkpoint=%s remaining=%.1fs midpoint=%.4f "
-            "odds_change_10s=%.4f btc_move_pct=%.4f direction=%s raw_score=%.3f "
-            "decision_confidence=%.3f decision_up_p=%.3f decision_samples=%d "
+            "odds_change_10s=%.4f btc_move_pct=%.4f direction=%s exchanges=%s "
+            "relationship=%s raw_score=%.3f decision_confidence=%.3f decision_up_p=%.3f decision_samples=%d "
             "research_confidence=%.3f research_up_p=%.3f research_samples=%d paper_trade=not_required",
             market_id, checkpoint, remaining, midpoint, odds_change, abs(move), direction,
-            confidence, decision["probability"], decision["up_probability"], decision["samples"],
+            ",".join(f"{venue}:{value:+.4f}" if value is not None else f"{venue}:missing"
+                     for venue, value in exchange_moves.items()),
+            exchange_relationship, confidence, decision["probability"], decision["up_probability"], decision["samples"],
             research["probability"], research["up_probability"], research["samples"],
         )
 
