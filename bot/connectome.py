@@ -384,7 +384,13 @@ class Connectome:
             features["_forecast_probability"] = min(0.999, max(0.001, float(forecast_probability)))
         forecast_up_probability = getattr(opportunity, "_connectome_up_probability", None)
         if forecast_up_probability is not None:
-            features["_forecast_up_probability"] = min(0.999, max(0.001, float(forecast_up_probability)))
+            up_probability = min(0.999, max(0.001, float(forecast_up_probability)))
+            features["_forecast_up_probability"] = up_probability
+            if self.name == "analysis":
+                # The analysis graph is judged on its own Up/Down forecast, not
+                # the BTC-consensus heuristic stored as a descriptive feature.
+                features["_forecast_direction"] = "up" if up_probability >= 0.5 else "down"
+                features["_forecast_probability"] = max(up_probability, 1.0 - up_probability)
         with self._connect() as con:
             # Same contract/checkpoint rescans are idempotent and cannot inflate graph visits.
             if con.execute("SELECT 1 FROM observations WHERE event_id=?", (event_id,)).fetchone():
@@ -558,7 +564,10 @@ class Connectome:
         settled = 0
         for row in rows:
             features = json.loads(row["features_json"])
-            direction = str(features.get("direction", "unknown")).lower()
+            direction = str(
+                features.get("_forecast_direction") if self.name == "analysis"
+                else features.get("direction", "unknown")
+            ).lower()
             won = (direction == "up" and actual_up) or (direction == "down" and not actual_up)
             if direction in ("up", "down") and self.settle(str(row["event_id"]), won, actual_up=actual_up):
                 settled += 1
