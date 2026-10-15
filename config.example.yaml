@@ -1,67 +1,26 @@
-# Trading Bot Configuration
+# Configuration matching the keys consumed by main.py and bot components.
+# Paper-only: live order execution is hard-blocked in code.
+market_monitor:
+  exchanges: [binance, coinbase, kraken]
+  update_interval: 0.1
 
-# Trading settings
-trading:
-  mode: "paper"  # paper or live
-  initial_balance: 10000.0
-  max_position_size: 0.1  # 10% of balance
-  stop_loss: 0.05  # 5% stop loss
-  take_profit: 0.02  # 2% take profit
-  min_confidence: 0.7  # Minimum confidence for trades
+opportunity_detection:
+  min_price_difference: 0.3
+  min_confidence: 0.7
+  max_delay_seconds: 15
 
-# Market monitoring
-monitoring:
-  exchanges:
-    - binance
-    - coinbase
-    - kraken
-  symbols:
-    - BTC/USDT
-    - ETH/USDT
-  update_interval: 0.1  # seconds
-  
-# Polymarket settings
-polymarket:
-  api_url: "wss://ws-subscriptions-clob.polymarket.com"
-  markets:
-    - bitcoin_15min
-    - bitcoin_hourly
-  
-# AI analysis
-ai:
-  claude_model: "claude-3-sonnet-20240229"
-  pattern_analysis: true
-  sentiment_analysis: true
-  confidence_threshold: 0.75
+trade_execution:
+  max_position_size: 100
+  min_position_size: 5
+  risk_per_trade: 0.02
+  max_daily_trades: 50
+  min_confidence: 0.7
 
-# Self-improvement
-improvement:
-  enabled: true
-  learning_rate: 0.01
-  performance_window: 100  # trades
-  auto_adjust_params: true
+ai_analysis:
+  ai_buffer_size: 100
+  ai_analysis_interval: 30
 
-# Monitoring and alerts
-alerts:
-  discord:
-    enabled: true
-    webhook_url: ""
-  telegram:
-    enabled: false
-    bot_token: ""
-    chat_id: ""
-    
-# Logging
-logging:
-  level: "INFO"
-  file: "logs/trading.log"
-  max_size: "10MB"
-  backup_count: 5
-
-# API keys (use environment variables)
-api_keys:
-  binance_key: "${BINANCE_API_KEY}"
-  binance_secret: "${BINANCE_API_SECRET}"
-  coinbase_key: "${COINBASE_API_KEY}"
-  coinbase_secret: "${COINBASE_API_SECRET}"
-  anthropic_key: "${ANTHROPIC_API_KEY}"
+self_improvement:
+  improvement_analysis_interval: 3600
+  min_trades_for_analysis: 20
+  improvement_threshold: 0.05
