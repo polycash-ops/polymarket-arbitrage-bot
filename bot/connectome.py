@@ -412,18 +412,24 @@ class Connectome:
                 features["_forecast_direction"] = "up" if up_probability >= 0.5 else "down"
                 features["_forecast_probability"] = max(up_probability, 1.0 - up_probability)
         with self._connect() as con:
-            # Same contract/checkpoint rescans are idempotent and cannot inflate graph visits.
+            # One durable row per quote refresh. The unique event_id makes retries idempotent.
             if con.execute("SELECT 1 FROM observations WHERE event_id=?", (event_id,)).fetchone():
                 return event_id
+            market_id = str(getattr(opportunity, "market_id", "") or "")
+            previous_row = con.execute(
+                "SELECT features_json FROM observations WHERE market_id=? ORDER BY observed_at DESC LIMIT 1",
+                (market_id,),
+            ).fetchone() if market_id else None
+            previous_features = json.loads(previous_row["features_json"]) if previous_row else {}
             con.execute(
                 "INSERT INTO observations(event_id,market_id,observed_at,features_json) VALUES(?,?,?,?)",
-                (event_id, getattr(opportunity, "market_id", None), now, json.dumps(features, sort_keys=True)),
+                (event_id, market_id or None, now, json.dumps(features, sort_keys=True)),
             )
             node_features = {
                 k: v for k, v in features.items()
                 if not k.startswith("_") and isinstance(v, (str, int, float, bool))
             }
-            node_ids = []
+            node_ids = {}
             for kind, signature in node_features.items():
                 node_id = _stable_id(f"{self.name}|{kind}|{signature}")
                 exists = con.execute("SELECT 1 FROM nodes WHERE node_id=?", (node_id,)).fetchone()
@@ -436,19 +442,44 @@ class Connectome:
                         (node_id, kind, signature, now),
                     )
                 con.execute("UPDATE nodes SET visits=visits+1,updated_at=? WHERE node_id=?", (now, node_id))
-                node_ids.append(node_id)
-            # Link consecutive feature nodes, with a hard graph-capacity guard.
-            for source, target in zip(node_ids, node_ids[1:]):
+                node_ids[kind] = node_id
+
+            # Cross-feature links represent the current state; temporal links connect
+            # each changed feature state to its prior state in this same contract.
+            edge_pairs = list(zip(list(node_ids.values()), list(node_ids.values())[1:]))
+            for kind, signature in node_features.items():
+                prior_signature = previous_features.get(kind)
+                if prior_signature is None or prior_signature == signature:
+                    continue
+                prior_id = _stable_id(f"{self.name}|{kind}|{prior_signature}")
+                if con.execute("SELECT 1 FROM nodes WHERE node_id=?", (prior_id,)).fetchone():
+                    edge_pairs.append((prior_id, node_ids[kind]))
+            new_edges = 0
+            updated_edges = 0
+            for source, target in edge_pairs:
+                if source == target:
+                    continue
                 edge_id = _stable_id(f"{self.name}|{source}|{target}")
                 exists = con.execute("SELECT 1 FROM edges WHERE edge_id=?", (edge_id,)).fetchone()
-                if not exists:
-                    count = con.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
-                    if count >= self.max_edges:
-                        continue
-                    con.execute(
-                        "INSERT INTO edges(edge_id,source_id,target_id,weight,updated_at) VALUES(?,?,?,?,?)",
-                        (edge_id, source, target, 0.0, now),
-                    )
+                if exists:
+                    con.execute("UPDATE edges SET updates=updates+1,updated_at=? WHERE edge_id=?", (now, edge_id))
+                    updated_edges += 1
+                    continue
+                count = con.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
+                if count >= self.max_edges:
+                    continue
+                con.execute(
+                    "INSERT INTO edges(edge_id,source_id,target_id,weight,updated_at) VALUES(?,?,?,?,?)",
+                    (edge_id, source, target, 0.0, now),
+                )
+                new_edges += 1
+            logger.info(
+                "CONNECTOME_SNAPSHOT graph=%s market=%s event=%s features=%d nodes_touched=%d "
+                "new_nodes=%d edges_new=%d edges_revisited=%d prior_snapshot=%s",
+                self.name, market_id or "unknown", event_id, len(node_features), len(node_ids),
+                sum(1 for node_id in node_ids.values() if con.execute("SELECT visits FROM nodes WHERE node_id=?", (node_id,)).fetchone()[0] == 1),
+                new_edges, updated_edges, bool(previous_row),
+            )
         return event_id
 
     def predict(self, opportunity: Any, role: str = "decision") -> Dict[str, Any]:
