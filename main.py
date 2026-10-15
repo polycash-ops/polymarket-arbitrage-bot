@@ -106,13 +106,15 @@ class TradingBot:
 
     async def _on_market_scan(self, exchange, point):
         """Continuously snapshot live contract conditions, independently of paper trades."""
-        if exchange != "polymarket" or not point.market_id or not point.end_time:
+        if exchange not in {"polymarket", "polymarket_hourly"} or not point.market_id or not point.end_time:
             return
         if point.bid is None or point.ask is None or not (0 < float(point.bid) <= float(point.ask) < 1):
             return
         now = float(point.timestamp)
         remaining = max(0.0, float(point.end_time) - now)
-        if not (0 < remaining <= 900):
+        horizon_seconds = 3600 if exchange == "polymarket_hourly" else 900
+        market_horizon = "1h" if exchange == "polymarket_hourly" else "15m"
+        if not (0 < remaining <= horizon_seconds):
             return
         market_id = str(point.market_id)
         # Load persisted checkpoint history once per market per worker process.
@@ -196,7 +198,7 @@ class TradingBot:
             "binance_kraken": pair_relationship(exchange_moves["binance"], exchange_moves["kraken"]),
             "coinbase_kraken": pair_relationship(exchange_moves["coinbase"], exchange_moves["kraken"]),
         }
-        history = self.opportunity_detector.price_history.get("polymarket")
+        history = self.opportunity_detector.price_history.get(exchange)
         odds_change = float(history.get_probability_change(10) or 0.0) if history else 0.0
         midpoint = (float(point.bid) + float(point.ask)) / 2.0
         prediction_source = "btc_consensus" if abs(move) >= 0.001 and len(exchanges) >= 2 else "market_implied"
@@ -256,7 +258,7 @@ class TradingBot:
             polymarket_delay=delay, price_difference=abs(move), confidence=confidence,
             direction=direction, recommended_action="buy_yes" if direction == "up" else "buy_no",
             yes_bid=float(point.bid), yes_ask=float(point.ask), market_question=point.question,
-            market_horizon="15m", market_contract_end_time=float(point.end_time),
+            market_horizon=market_horizon, market_contract_end_time=float(point.end_time),
             bid_change_refresh=quote_changes["bid_change_refresh"],
             ask_change_refresh=quote_changes["ask_change_refresh"],
             midpoint_change_refresh=quote_changes["midpoint_change_refresh"],
@@ -285,12 +287,12 @@ class TradingBot:
             forecast_up_probability=analysis["up_probability"],
         )
         logger.info(
-            "CONNECTOME_SCAN market=%s checkpoint=%s remaining=%.1fs midpoint=%.4f "
+            "CONNECTOME_SCAN horizon=%s market=%s checkpoint=%s remaining=%.1fs midpoint=%.4f "
             "odds_change_10s=%.4f btc_move_pct=%.4f direction=%s exchanges=%s "
             "relationship=%s raw_score=%.3f decision_confidence=%.3f decision_up_p=%.3f decision_samples=%d "
             "research_confidence=%.3f research_up_p=%.3f research_samples=%d "
             "analysis_up_p=%.3f analysis_samples=%d paper_trade=not_required",
-            market_id, checkpoint, remaining, midpoint, odds_change, abs(move), direction,
+            market_horizon, market_id, checkpoint, remaining, midpoint, odds_change, abs(move), direction,
             ",".join(f"{venue}:{value:+.4f}" if value is not None else f"{venue}:missing"
                      for venue, value in exchange_moves.items()),
             exchange_relationship, confidence, decision["probability"], decision["up_probability"], decision["samples"],
