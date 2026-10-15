@@ -27,6 +27,10 @@ class PricePoint:
     question: Optional[str] = None
     end_time: Optional[float] = None
     yes_outcome_index: int = 0
+    depth_imbalance: Optional[float] = None
+    bid_depth: Optional[float] = None
+    ask_depth: Optional[float] = None
+    market_interval: str = "15m"
 
 
 class MarketMonitor:
@@ -40,6 +44,7 @@ class MarketMonitor:
         self.scan_count = 0
         self.settlement_callbacks = []
         self.pending_settlements = {}
+        self._last_depth_fetch = {}
 
     def add_callback(self, callback):
         """Add callback for price updates."""
@@ -331,11 +336,38 @@ class MarketMonitor:
                             bid, ask = raw_bid, raw_ask
                     except (TypeError, ValueError):
                         bid = ask = None
+                    depth_imbalance = bid_depth = ask_depth = None
+                    # Gamma provides best quotes, not full depth. Pull the CLOB book
+                    # for the Up token and aggregate the first five levels.
+                    token_ids = self._as_list(market.get("clobTokenIds"))
+                    outcomes_for_tokens = self._as_list(market.get("outcomes"))
+                    up_index = 0
+                    if len(outcomes_for_tokens) > 1 and "down" in str(outcomes_for_tokens[0]).lower() and "up" in str(outcomes_for_tokens[1]).lower():
+                        up_index = 1
+                    if len(token_ids) > up_index and now - self._last_depth_fetch.get(slug, 0.0) >= 5.0:
+                        self._last_depth_fetch[slug] = now
+                        try:
+                            async with self.session.get(
+                                "https://clob.polymarket.com/book",
+                                params={"token_id": str(token_ids[up_index])},
+                            ) as book_response:
+                                if book_response.status == 200:
+                                    book = await book_response.json()
+                                    bids = book.get("bids") or []
+                                    asks = book.get("asks") or []
+                                    bid_depth = sum(float(level.get("size", 0) or 0) for level in bids[:5] if isinstance(level, dict))
+                                    ask_depth = sum(float(level.get("size", 0) or 0) for level in asks[:5] if isinstance(level, dict))
+                                    total_depth = bid_depth + ask_depth
+                                    depth_imbalance = ((bid_depth - ask_depth) / total_depth) if total_depth > 0 else None
+                        except Exception as depth_error:
+                            logger.debug("CLOB depth unavailable for %s: %s", slug, depth_error)
                     point = PricePoint(
                         exchange="polymarket", price=up_price, timestamp=now,
                         volume=volume, bid=bid, ask=ask, market_id=slug,
                         question=question, end_time=None if end_time == float("inf") else end_time,
-                        yes_outcome_index=1 if outcome_order == "down_first" else 0
+                        yes_outcome_index=1 if outcome_order == "down_first" else 0,
+                        depth_imbalance=depth_imbalance, bid_depth=bid_depth, ask_depth=ask_depth,
+                        market_interval="15m"
                     )
                     self.prices["polymarket"] = point
                     self.polymarket_market_key = slug
