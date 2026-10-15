@@ -191,7 +191,7 @@ class OpportunityDetector:
             direction=direction,
             recommended_action="buy_yes" if direction == "up" else "buy_no",
             market_id=current_market.market_id,
-            expected_profit=edge * 100 * confidence,
+            # No dollar-profit claim until this edge is validated against settled outcomes.\n            expected_profit=0.0,
             risk_level=self._assess_risk(confidence, delay),
             market_question=current_market.question,
             yes_bid=yes_bid,
