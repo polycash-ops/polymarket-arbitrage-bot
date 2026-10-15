@@ -203,10 +203,20 @@ class MarketMonitor:
                                 continue
                             if not (0 <= first_price <= 1 and 0 <= second_price <= 1):
                                 continue
-                            candidates.append((end_time or float("inf"), market, first_price, outcomes))
+                            # Normalize the market to an Up-probability quote, regardless
+                            # of the order in Gamma's outcomes array.
+                            first_name = str(outcomes[0]).lower() if outcomes else "up"
+                            second_name = str(outcomes[1]).lower() if len(outcomes) > 1 else "down"
+                            if "down" in first_name and "up" in second_name:
+                                up_price = second_price
+                                outcome_order = "down_first"
+                            else:
+                                up_price = first_price
+                                outcome_order = "up_first"
+                            candidates.append((end_time or float("inf"), market, up_price, outcomes, outcome_order))
                         if candidates:
                             candidates.sort(key=lambda item: item[0])
-                            end_time, market, up_price, outcomes = candidates[0]
+                            end_time, market, up_price, outcomes, outcome_order = candidates[0]
                             slug = str(market.get("slug") or market.get("id") or "")
                             question = str(market.get("question") or "BTC Up or Down 15m")
                             try:
@@ -215,10 +225,13 @@ class MarketMonitor:
                                 volume = 0.0
                             bid = ask = None
                             try:
-                                if market.get("bestBid") is not None:
-                                    bid = float(market["bestBid"])
-                                if market.get("bestAsk") is not None:
-                                    ask = float(market["bestAsk"])
+                                raw_bid = float(market["bestBid"]) if market.get("bestBid") is not None else None
+                                raw_ask = float(market["bestAsk"]) if market.get("bestAsk") is not None else None
+                                if outcome_order == "down_first":
+                                    bid = 1.0 - raw_ask if raw_ask is not None else None
+                                    ask = 1.0 - raw_bid if raw_bid is not None else None
+                                else:
+                                    bid, ask = raw_bid, raw_ask
                             except (TypeError, ValueError):
                                 bid = ask = None
                             point = PricePoint(
