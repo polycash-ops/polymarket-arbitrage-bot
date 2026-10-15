@@ -19,11 +19,15 @@ trade_execution:
   max_daily_trades: 50
   min_confidence: 0.7
 
-ai_analysis:
-  ai_buffer_size: 100
-  ai_analysis_interval: 30
-
-self_improvement:
-  improvement_analysis_interval: 3600
-  min_trades_for_analysis: 20
-  improvement_threshold: 0.05
+connectomes:
+  decision:
+    max_nodes: 1000000
+    max_edges: 1000000
+    min_samples_for_gate: 20
+    min_learned_probability: 0.50
+    learning_rate: 0.03
+  research:
+    max_nodes: 1000000
+    max_edges: 1000000
+    min_samples_for_gate: 20
+    learning_rate: 0.03
