@@ -134,16 +134,17 @@ class TradingBot:
         self.last_connectome_remaining[market_id] = remaining
         checkpoint = None
         checkpoint_labels = []
-        if "first_seen" not in seen:
-            checkpoint = "first_seen"
-            checkpoint_labels.append("first_seen")
-            # A late first observation can still count for the nearest checkpoint
-            # if it lands inside that checkpoint's tolerance window.
-            if threshold_candidates:
-                checkpoint_labels.append(min(threshold_candidates, key=lambda candidate: candidate[1])[0])
-        elif threshold_candidates:
+        first_observation = "first_seen" not in seen
+        if threshold_candidates:
+            # Prefer the actual threshold for graph features; first_seen remains
+            # an additional reporting label when this is the contract's first scan.
             checkpoint = min(threshold_candidates, key=lambda candidate: candidate[1])[0]
             checkpoint_labels.append(checkpoint)
+            if first_observation:
+                checkpoint_labels.insert(0, "first_seen")
+        elif first_observation:
+            checkpoint = "first_seen"
+            checkpoint_labels.append("first_seen")
         if checkpoint is None and not continuous_due:
             return
         for label in checkpoint_labels:
