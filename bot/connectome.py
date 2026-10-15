@@ -287,6 +287,22 @@ class Connectome:
                         self.name, market_id, settled, actual_up)
         return settled
 
+    def pending_markets(self) -> list[str]:
+        """Markets with scan forecasts awaiting an authoritative final outcome."""
+        with self._connect() as con:
+            rows = con.execute(
+                "SELECT DISTINCT market_id FROM observations WHERE outcome IS NULL AND market_id IS NOT NULL"
+            ).fetchall()
+        return [str(row["market_id"]) for row in rows]
+
+    def pending_for_market(self, market_id: str) -> list[dict]:
+        with self._connect() as con:
+            rows = con.execute(
+                "SELECT event_id,features_json FROM observations WHERE market_id=? AND outcome IS NULL",
+                (market_id,),
+            ).fetchall()
+        return [{"event_id": row["event_id"], "features": json.loads(row["features_json"])} for row in rows]
+
     def stats(self) -> Dict[str, Any]:
         with self._connect() as con:
             nodes = con.execute("SELECT COUNT(*) FROM nodes").fetchone()[0]
@@ -295,6 +311,21 @@ class Connectome:
             settled = con.execute("SELECT COUNT(*) FROM observations WHERE outcome IS NOT NULL").fetchone()[0]
             wins = con.execute("SELECT COUNT(*) FROM observations WHERE outcome=1").fetchone()[0]
             losses = con.execute("SELECT COUNT(*) FROM observations WHERE outcome=0").fetchone()[0]
+            rows = con.execute("SELECT features_json,outcome FROM observations WHERE outcome IS NOT NULL").fetchall()
+            checkpoint_counts = {}
+            for row in rows:
+                features = json.loads(row["features_json"])
+                checkpoint = str(features.get("checkpoint", "trade_signal"))
+                item = checkpoint_counts.setdefault(checkpoint, {"wins": 0, "losses": 0, "settled": 0})
+                item["settled"] += 1
+                item["wins" if int(row["outcome"]) == 1 else "losses"] += 1
+            for item in checkpoint_counts.values():
+                item["win_rate"] = round(item["wins"] / item["settled"], 6) if item["settled"] else None
+            candidates = {
+                key: value for key, value in checkpoint_counts.items()
+                if key in {"first_seen", "10m", "5m", "3m", "1m"} and value["settled"] >= 20
+            }
+            recommended = max(candidates, key=lambda key: (candidates[key]["win_rate"], candidates[key]["settled"])) if candidates else None
             return {
                 "name": self.name,
                 "storage": self.db_path,
@@ -307,5 +338,7 @@ class Connectome:
                 "wins": int(wins),
                 "losses": int(losses),
                 "win_rate": round(wins / settled, 6) if settled else None,
+                "checkpoint_performance": checkpoint_counts,
+                "recommended_checkpoint": recommended,
                 "learning": "settlement_only",
             }
