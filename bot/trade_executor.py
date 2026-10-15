@@ -49,7 +49,9 @@ class TradingStats:
 class TradeExecutor:
     def __init__(self, config: dict, paper_trading: bool = True):
         self.config = config
-        self.paper_trading = paper_trading
+        if not paper_trading:
+            raise RuntimeError('Live trading is hard-blocked in this repository; initialize TradeExecutor in paper mode only.')
+        self.paper_trading = True
         self.session: Optional[aiohttp.ClientSession] = None
         
         # Trading parameters
@@ -109,11 +111,8 @@ class TradeExecutor:
         
         self.trades.append(trade)
         
-        # Execute based on mode
-        if self.paper_trading:
-            success = await self._execute_paper_trade(trade)
-        else:
-            success = await self._execute_live_trade(trade)
+        # This fork is paper-only. Never route an opportunity to live execution.
+        success = await self._execute_paper_trade(trade)
             
         # Update stats
         self._update_stats(trade)
