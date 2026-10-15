@@ -84,8 +84,8 @@ h1{font-size:clamp(1.5rem,4vw,2.2rem);line-height:1.15;margin:0 0 8px;letter-spa
 <section class="section">
  <div class="section-head"><h2>Connectome learning graphs</h2><span class="small" id="connectomeSummary">Learning from settled paper outcomes only</span></div>
  <div class="grid-two">
-  <article class="card"><h2>Decision Connectome</h2><div class="metric-label">Active nodes / capacity</div><div class="metric" id="decisionNodes">—</div><div class="metric-label" style="margin-top:12px">Active edges / capacity</div><div class="metric" id="decisionEdges">—</div><div class="metric-label" style="margin-top:12px">Settled observations · win rate</div><div id="decisionLearning" style="font-weight:700">—</div></article>
-  <article class="card"><h2>Research Connectome</h2><div class="metric-label">Active nodes / capacity</div><div class="metric" id="researchNodes">—</div><div class="metric-label" style="margin-top:12px">Active edges / capacity</div><div class="metric" id="researchEdges">—</div><div class="metric-label" style="margin-top:12px">Settled observations · win rate</div><div id="researchLearning" style="font-weight:700">—</div></article>
+  <article class="card"><h2>Decision Connectome</h2><div class="metric-label">Active nodes / capacity</div><div class="metric" id="decisionNodes">—</div><div class="metric-label" style="margin-top:12px">Active edges / capacity</div><div class="metric" id="decisionEdges">—</div><div class="metric-label" style="margin-top:12px">Settled observations · win rate</div><div id="decisionLearning" style="font-weight:700">—</div><div class="metric-label" style="margin-top:12px">Checkpoint comparison</div><div id="decisionCheckpoints" class="small">Awaiting settled contracts</div><div class="metric-label" style="margin-top:10px">Best supported checkpoint</div><div id="decisionBestCheckpoint" style="font-weight:700">Not enough samples</div></article>
+  <article class="card"><h2>Research Connectome</h2><div class="metric-label">Active nodes / capacity</div><div class="metric" id="researchNodes">—</div><div class="metric-label" style="margin-top:12px">Active edges / capacity</div><div class="metric" id="researchEdges">—</div><div class="metric-label" style="margin-top:12px">Settled observations · win rate</div><div id="researchLearning" style="font-weight:700">—</div><div class="metric-label" style="margin-top:12px">Checkpoint comparison</div><div id="researchCheckpoints" class="small">Awaiting settled contracts</div><div class="metric-label" style="margin-top:10px">Best supported checkpoint</div><div id="researchBestCheckpoint" style="font-weight:700">Not enough samples</div></article>
  </div>
  <p class="small">Each graph supports up to 1,000,000 nodes and 1,000,000 edges. Capacity is a ceiling, not a pre-created graph: active nodes and edges grow with evidence. Learning labels come only from final paper settlements.</p>
 </section>
@@ -117,7 +117,12 @@ function paintConnectomes(graphs){
  put("decisionNodes",fmt(d.nodes_active)+" / "+fmt(d.node_capacity));put("decisionEdges",fmt(d.edges_active)+" / "+fmt(d.edge_capacity));
  put("decisionLearning",fmt(d.settled_observations)+" settled · "+rate(d));
  put("researchNodes",fmt(r.nodes_active)+" / "+fmt(r.node_capacity));put("researchEdges",fmt(r.edges_active)+" / "+fmt(r.edge_capacity));
- put("researchLearning",fmt(r.settled_observations)+" settled · "+rate(r));put("connectomeSummary","Decision + research · settlement-only learning");
+ put("researchLearning",fmt(r.settled_observations)+" settled · "+rate(r));
+ const checkpointLine=g=>Object.entries(g.checkpoint_performance||{}).filter(([k,v])=>["first_seen","10m","5m","1m"].includes(k)).map(([k,v])=>k+": "+fmt(v.settled)+" settled, "+(num(v.win_rate)===null?"—":pct(v.win_rate))).join(" · ")||"Awaiting settled contracts";
+ put("decisionCheckpoints",checkpointLine(d));put("researchCheckpoints",checkpointLine(r));
+ put("decisionBestCheckpoint",d.recommended_checkpoint||"Not enough samples (20 per checkpoint)");
+ put("researchBestCheckpoint",r.recommended_checkpoint||"Not enough samples (20 per checkpoint)");
+ put("connectomeSummary","Checkpoint accuracy measured against verified closed-contract outcomes");
 }
 function paintTrades(trades){
  const tbody=el("tradeRows");tbody.replaceChildren();put("tradeSummary",trades.length+" recorded");
