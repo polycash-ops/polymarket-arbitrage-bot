@@ -106,12 +106,10 @@ class TradingBot:
         market_id = str(point.market_id)
         seen = self.scan_checkpoints_seen.setdefault(market_id, set())
         checkpoints = []
-        first_seen_now = "first_seen" not in seen
-        if first_seen_now:
+        if "first_seen" not in seen:
             checkpoints.append("first_seen")
             seen.add("first_seen")
-            # A horizon already passed at discovery is recorded as missed, not
-            # falsely represented as an observation from that time.
+            # Do not fabricate checkpoints whose timing has already passed.
             for label, seconds in (("10m", 600), ("5m", 300), ("3m", 180), ("1m", 60)):
                 if remaining <= seconds:
                     seen.add(label)
@@ -121,44 +119,49 @@ class TradingBot:
                     checkpoints.append(label)
         if not checkpoints:
             return
+
         move, exchanges = self.opportunity_detector._consensus_move()
-        polymarket_history = self.opportunity_detector.price_history.get("polymarket")
-        odds_change = float(polymarket_history.get_probability_change(10) or 0.0) if polymarket_history else 0.0
-        prediction_source = "btc_consensus" if move is not None and len(exchanges) >= 2 else "market_midpoint"
-        if move is not None and abs(move) >= 0.001:
-            direction = "up" if move > 0 else "down"
-        else:
-            direction = "up" if float(point.price) >= 0.5 else "down"
+        history = self.opportunity_detector.price_history.get("polymarket")
+        odds_change = float(history.get_probability_change(10) or 0.0) if history else 0.0
+        prediction_source = "btc_consensus" if move is not None and abs(move) >= 0.001 and len(exchanges) >= 2 else "market_implied"
+        direction = "up" if move is not None and abs(move) >= 0.001 and len(exchanges) >= 2 and move > 0 else "down" if move is not None and abs(move) >= 0.001 and len(exchanges) >= 2 else ("up" if float(point.price) >= 0.5 else "down")
         move_abs = abs(float(move or 0.0))
-        midpoint = float(point.price)
-        odds_history = self.opportunity_detector.price_history.get("polymarket")
-        odds_change = odds_history.get_probability_change(10) if odds_history else 0.0
-        prediction_source = "btc_consensus" if move is not None and abs(move) >= 0.001 else "market_implied"
+        quote_midpoint = (
+            (float(point.bid) + float(point.ask)) / 2.0
+            if point.bid is not None and point.ask is not None and 0 < point.bid <= point.ask < 1
+            else float(point.price)
+        )
         confidence = min(0.99, max(0.01,
             0.50 + min(move_abs / 0.20, 1.0) * 0.20
-            + min(abs(midpoint - 0.5) / 0.5, 1.0) * 0.20
+            + min(abs(float(point.price) - 0.5) / 0.5, 1.0) * 0.20
             + (0.10 if len(exchanges) >= 2 else 0.0)))
-        quote_midpoint = (float(point.bid) + float(point.ask)) / 2.0 if point.bid is not None and point.ask is not None and 0 < point.bid <= point.ask < 1 else float(point.price)
-        midpoint = quote_midpoint
+
         for checkpoint in checkpoints:
             seen.add(checkpoint)
             snapshot = SimpleNamespace(
-                timestamp=now, market_id=market_id, checkpoint=checkpoint,
-                time_remaining=remaining, minutes_remaining=remaining / 60.0,
-                midpoint=midpoint, market_up_probability=midpoint, depth_imbalance=None,
-                market_probability_change=float(odds_change or 0.0),
-                btc_consensus_move=float(move or 0.0), agreeing_exchange_count=len(exchanges),
+                timestamp=now,
+                market_id=market_id,
+                checkpoint=checkpoint,
+                time_remaining=remaining,
+                minutes_remaining=remaining / 60.0,
+                midpoint=quote_midpoint,
+                market_up_probability=float(point.price),
+                depth_imbalance=None,
+                market_probability_change=odds_change,
+                btc_consensus_move=float(move or 0.0),
+                agreeing_exchange_count=len(exchanges),
                 prediction_source=prediction_source,
                 exchange_moved=",".join(exchanges) if exchanges else "none",
-                agreeing_exchange_count=len(exchanges),
-                prediction_source="btc_consensus" if move is not None and len(exchanges) >= 2 else "market_midpoint",
-                market_probability_change=(self.opportunity_detector.price_history.get("polymarket").get_probability_change(10)
-                    if self.opportunity_detector.price_history.get("polymarket") else 0.0),
                 polymarket_delay=max(0.0, now - self.opportunity_detector.last_polymarket_change),
-                price_difference=move_abs, confidence=confidence, direction=direction,
+                price_difference=move_abs,
+                confidence=confidence,
+                direction=direction,
                 recommended_action="buy_yes" if direction == "up" else "buy_no",
-                yes_bid=point.bid, yes_ask=point.ask, market_question=point.question,
-                market_end_time=point.end_time, expected_profit=0.0,
+                yes_bid=point.bid,
+                yes_ask=point.ask,
+                market_question=point.question,
+                market_end_time=point.end_time,
+                expected_profit=0.0,
                 connectome_event_id=f"scan:{market_id}:{checkpoint}",
             )
             d = self.decision_connectome.predict(snapshot, role="decision")
@@ -169,7 +172,7 @@ class TradingBot:
                 "CONNECTOME_SCAN market=%s checkpoint=%s remaining=%.1fs midpoint=%.4f "
                 "btc_move_pct=%.4f direction=%s raw_score=%.3f decision_p=%.3f "
                 "decision_samples=%d research_p=%.3f research_samples=%d",
-                market_id, checkpoint, remaining, midpoint, move_abs, direction, confidence,
+                market_id, checkpoint, remaining, quote_midpoint, move_abs, direction, confidence,
                 d["probability"], d["samples"], r["probability"], r["samples"],
             )
 
