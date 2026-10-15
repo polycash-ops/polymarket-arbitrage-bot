@@ -129,6 +129,9 @@ class TradingBot:
             direction = "up" if float(point.price) >= 0.5 else "down"
         move_abs = abs(float(move or 0.0))
         midpoint = float(point.price)
+        odds_history = self.opportunity_detector.price_history.get("polymarket")
+        odds_change = odds_history.get_probability_change(10) if odds_history else 0.0
+        prediction_source = "btc_consensus" if move is not None and abs(move) >= 0.001 else "market_implied"
         confidence = min(0.99, max(0.01,
             0.50 + min(move_abs / 0.20, 1.0) * 0.20
             + min(abs(midpoint - 0.5) / 0.5, 1.0) * 0.20
