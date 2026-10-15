@@ -1,12 +1,14 @@
 """Connectome-driven Polymarket arbitrage research bot. Paper-only by design."""
 import argparse
 import asyncio
+import json
 import logging
 import time
 from types import SimpleNamespace
 from pathlib import Path
 from typing import Any, Dict
 
+import aiohttp
 import yaml
 
 from bot.connectome import Connectome
@@ -280,6 +282,7 @@ class TradingBot:
             await asyncio.gather(
                 self.market_monitor.start(),
                 self.trade_executor.start(),
+                self._checkpoint_settlement_loop(),
                 self._status_loop(),
             )
         except asyncio.CancelledError:
@@ -292,6 +295,48 @@ class TradingBot:
     async def stop(self):
         await asyncio.gather(self.market_monitor.stop(), self.trade_executor.stop(), return_exceptions=True)
         logger.info("Connectome bot stopped")
+
+    async def _checkpoint_settlement_loop(self):
+        """Recover unresolved scan labels after worker restarts using Gamma's final outcomes."""
+        url = "https://gamma-api.polymarket.com/markets"
+        async with aiohttp.ClientSession() as session:
+            while True:
+                await asyncio.sleep(30)
+                pending = set(self.decision_connectome.pending_markets())
+                pending.update(self.research_connectome.pending_markets())
+                for market_id in pending:
+                    try:
+                        async with session.get(f"{url}/slug/{market_id}", timeout=aiohttp.ClientTimeout(total=10)) as response:
+                            if response.status != 200:
+                                continue
+                            payload = await response.json()
+                        market = payload[0] if isinstance(payload, list) and payload else payload
+                        if not isinstance(market, dict) or not market.get("closed"):
+                            continue
+                        outcomes = market.get("outcomes", [])
+                        prices = market.get("outcomePrices", [])
+                        if isinstance(outcomes, str):
+                            outcomes = json.loads(outcomes)
+                        if isinstance(prices, str):
+                            prices = json.loads(prices)
+                        if not isinstance(outcomes, list) or not isinstance(prices, list) or len(outcomes) < 2 or len(prices) < 2:
+                            continue
+                        parsed = [float(prices[0]), float(prices[1])]
+                        winner_index = 0 if parsed[0] >= 0.99 else 1 if parsed[1] >= 0.99 else None
+                        if winner_index is None:
+                            continue
+                        winner = str(outcomes[winner_index]).lower()
+                        if "up" in winner:
+                            actual_up = True
+                        elif "down" in winner:
+                            actual_up = False
+                        else:
+                            continue
+                        await self._on_contract_settled(market_id, actual_up)
+                    except (aiohttp.ClientError, asyncio.TimeoutError, ValueError, TypeError, json.JSONDecodeError) as exc:
+                        logger.warning("Checkpoint settlement recovery failed for %s: %s", market_id, exc)
+                    except Exception:
+                        logger.exception("Unexpected checkpoint settlement recovery error for %s", market_id)
 
     async def _status_loop(self):
         while True:
