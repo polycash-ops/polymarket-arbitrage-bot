@@ -92,8 +92,8 @@ h1{font-size:clamp(1.5rem,4vw,2.2rem);line-height:1.15;margin:0 0 8px;letter-spa
 <section class="section panel"><div class="panel-inner">
  <div class="section-head"><h2>Overlapping Trend Analysis Connectome</h2><span class="small">Independent graph · 1,000,000-node capacity · 5-second snapshot cadence</span></div>
  <div class="grid-two">
-  <div><div class="metric-label">Analysis graph nodes / capacity</div><div class="metric" id="analysisNodes">—</div><div class="metric-label">Edges / capacity</div><div id="analysisEdges" style="font-weight:700">—</div></div>
-  <div><div class="metric-label">Recorded snapshots</div><div class="metric" id="analysisObservations">—</div><div class="metric-label">Verified settlements / forecast accuracy</div><div id="analysisSettled" style="font-weight:700">Awaiting verified settlements</div><div class="metric-label">Model Brier vs market midpoint Brier</div><div id="analysisBrier" style="font-weight:700">—</div></div>
+  <div><div class="metric-label">Analysis graph nodes / capacity</div><div class="metric" id="analysisNodes">—</div><div class="metric-label">Edges / 1M capacity</div><div id="analysisEdges" style="font-weight:700">—</div><div class="metric-label">Nodes touched in last 15 minutes</div><div id="analysisRecentNodes" style="font-weight:700">—</div><div class="metric-label">Edges touched in last 15 minutes</div><div id="analysisRecentEdges" style="font-weight:700">—</div></div>
+  <div><div class="metric-label">Recorded snapshots</div><div class="metric" id="analysisObservations">—</div><div class="metric-label">Snapshots in last 15 minutes / last snapshot age</div><div id="analysisRecentSnapshots" style="font-weight:700">—</div><div class="metric-label">Node visits / edge traversals</div><div id="analysisTraversals" style="font-weight:700">—</div><div class="metric-label">Verified settlements / forecast accuracy (target ≥98%)</div><div id="analysisSettled" style="font-weight:700">Awaiting verified settlements</div><div class="metric-label">Model Brier vs market midpoint Brier</div><div id="analysisBrier" style="font-weight:700">—</div><div class="metric-label">Edges updated by verified outcomes</div><div id="analysisLearnedEdges" style="font-weight:700">—</div></div>
  </div>
  <p class="small">The analysis graph scores directional forecasts against each contract's verified close. It samples quote changes on the dashboard's 5-second refresh cadence and keeps 15-minute and hourly contracts separate by market ID and end timestamp. Depth comes from the Polymarket CLOB top-five order-book levels when the book endpoint responds; unavailable readings remain explicitly marked, never inferred from quotes.</p>
  <div class="table-wrap"><table><thead><tr><th>Contract horizon</th><th>Market / close</th><th>Bid</th><th>Ask</th><th>Midpoint</th><th>Midpoint Δ / refresh</th><th>Depth imbalance</th><th>Bid depth</th><th>Ask depth</th><th>Analysis P(Up)</th><th>Trend</th><th>Time to close</th></tr></thead><tbody id="polymarketQuoteRows"><tr><td colspan="12" class="empty">Waiting for Polymarket quotes</td></tr></tbody></table></div>
@@ -126,7 +126,12 @@ function paintConnectomes(graphs){
  put("analysisNodes",fmt(a.nodes_active)+" / "+fmt(a.node_capacity));
  put("analysisEdges",fmt(a.edges_active)+" / "+fmt(a.edge_capacity));
  put("analysisObservations",fmt(a.observations));
- put("analysisSettled",fmt(a.settled_observations)+" settled · "+rate(a));
+ put("analysisRecentSnapshots",fmt(a.observations_last_15m)+" / "+(num(a.last_observation_age_seconds)===null?"no snapshot":duration(a.last_observation_age_seconds)+" ago"));
+ put("analysisRecentNodes",fmt(a.nodes_touched_last_15m));
+ put("analysisRecentEdges",fmt(a.edges_touched_last_15m));
+ put("analysisTraversals",fmt(a.total_node_visits)+" visits · "+fmt(a.total_edge_traversals)+" edge traversals");
+ put("analysisLearnedEdges",fmt(a.learned_edge_updates)+" verified-outcome edge updates");
+ put("analysisSettled",fmt(a.settled_observations)+" settled · "+rate(a)+" · target ≥98% (not guaranteed)");
  put("analysisBrier",(num(a.brier_score)===null?"—":Number(a.brier_score).toFixed(3))+" vs "+(num(a.market_baseline_brier)===null?"—":Number(a.market_baseline_brier).toFixed(3)));
  put("decisionNodes",fmt(d.nodes_active)+" / "+fmt(d.node_capacity));put("decisionEdges",fmt(d.edges_active)+" / "+fmt(d.edge_capacity));
  put("decisionLearning",fmt(d.settled_observations)+" settled · "+rate(d));
