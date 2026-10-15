@@ -38,10 +38,64 @@ class MarketMonitor:
         self.session: Optional[aiohttp.ClientSession] = None
         self.polymarket_market_key: Optional[str] = None
         self.scan_count = 0
+        self.settlement_callbacks = []
+        self.pending_settlements = {}
 
     def add_callback(self, callback):
         """Add callback for price updates."""
         self.callbacks.append(callback)
+
+    def add_settlement_callback(self, callback):
+        """Register a callback for verified final outcomes of closed 15-minute contracts."""
+        self.settlement_callbacks.append(callback)
+
+    async def _poll_closed_contracts(self, url: str, now: float):
+        current = self.prices.get("polymarket")
+        if current and current.end_time is not None and current.end_time <= now:
+            self.pending_settlements.setdefault(current.market_id, current)
+        for market_id, point in list(self.pending_settlements.items()):
+            try:
+                async with self.session.get(f"{url}/slug/{market_id}") as response:
+                    if response.status != 200:
+                        continue
+                    result = await response.json()
+                market = result[0] if isinstance(result, list) and result else result
+                if not isinstance(market, dict):
+                    continue
+                if not bool(market.get("closed")):
+                    continue
+                outcomes = self._as_list(market.get("outcomes"))
+                prices = self._as_list(market.get("outcomePrices"))
+                if len(outcomes) < 2 or len(prices) < 2:
+                    continue
+                parsed = []
+                for value in prices[:2]:
+                    try:
+                        parsed.append(float(value))
+                    except (TypeError, ValueError):
+                        parsed.append(None)
+                if any(value is None for value in parsed):
+                    continue
+                winner_index = 0 if parsed[0] >= 0.99 else 1 if parsed[1] >= 0.99 else None
+                if winner_index is None:
+                    continue
+                winner_name = str(outcomes[winner_index]).lower()
+                if "up" in winner_name:
+                    actual_up = True
+                elif "down" in winner_name:
+                    actual_up = False
+                else:
+                    continue
+                logger.info("POLYMARKET_CONTRACT_FINAL market=%s actual_up=%s prices=%s",
+                            market_id, actual_up, parsed)
+                for callback in self.settlement_callbacks:
+                    try:
+                        await callback(market_id, actual_up)
+                    except Exception:
+                        logger.exception("Closed-contract settlement callback failed for %s", market_id)
+                self.pending_settlements.pop(market_id, None)
+            except Exception:
+                logger.exception("Could not verify closed Polymarket contract %s", market_id)
 
     async def start(self):
         """Start monitoring all exchanges."""
@@ -164,6 +218,7 @@ class MarketMonitor:
                     continue
                 self.scan_count += 1
                 now = time.time()
+                await self._poll_closed_contracts(url, now)
                 now_dt = datetime.fromtimestamp(now, timezone.utc)
                 window_minute = (now_dt.minute // 15) * 15
                 window_start = now_dt.replace(minute=window_minute, second=0, microsecond=0)
