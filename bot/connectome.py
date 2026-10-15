@@ -463,12 +463,23 @@ class Connectome:
             losses = con.execute("SELECT COUNT(*) FROM observations WHERE outcome=0").fetchone()[0]
             rows = con.execute("SELECT features_json,outcome,actual_up FROM observations WHERE outcome IS NOT NULL").fetchall()
             checkpoint_counts = {}
-            for row in rows:
+            # Include every recorded checkpoint, not only checkpoints that have
+            # already settled. This makes exploration visible while outcomes wait.
+            all_checkpoint_rows = con.execute(
+                "SELECT features_json,outcome FROM observations"
+            ).fetchall()
+            for row in all_checkpoint_rows:
                 features = json.loads(row["features_json"])
                 checkpoint = str(features.get("checkpoint", "trade_signal"))
-                item = checkpoint_counts.setdefault(checkpoint, {"wins": 0, "losses": 0, "settled": 0})
-                item["settled"] += 1
-                item["wins" if int(row["outcome"]) == 1 else "losses"] += 1
+                item = checkpoint_counts.setdefault(
+                    checkpoint, {"observations": 0, "pending": 0, "wins": 0, "losses": 0, "settled": 0}
+                )
+                item["observations"] += 1
+                if row["outcome"] is None:
+                    item["pending"] += 1
+                else:
+                    item["settled"] += 1
+                    item["wins" if int(row["outcome"]) == 1 else "losses"] += 1
             brier_total = 0.0
             brier_n = 0
             directional_brier_total = 0.0
