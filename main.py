@@ -257,9 +257,15 @@ class TradingBot:
                 _, prior = min(nearby, key=lambda pair: abs(pair[0] - horizon_seconds))
             else:
                 older = [(age, row) for age, row in aged if age >= horizon_seconds]
-                if not older:
+                if older:
+                    _, prior = min(older, key=lambda pair: pair[0] - horizon_seconds)
+                elif horizon_seconds == 3600.0 and market_horizon == "1h" and aged:
+                    # A one-hour contract expires before a full 3,600-second
+                    # quote delta can be observed. Use its first stored quote as
+                    # the hourly-contract trajectory anchor, never another contract.
+                    _, prior = max(aged, key=lambda pair: pair[0])
+                else:
                     return None
-                _, prior = min(older, key=lambda pair: pair[0] - horizon_seconds)
             previous_value = prior.get(field)
             return None if previous_value is None else current_value - float(previous_value)
         def average_depth(horizon_seconds):
