@@ -138,6 +138,8 @@ class Connectome:
         if role == "research":
             # Research independently combines time, odds, momentum and exchange agreement.
             base = {
+                "checkpoint": checkpoint,
+                "direction": direction,
                 "checkpoint_midpoint": f"{checkpoint}:{midpoint_bucket}",
                 "remaining_depth": f"{remaining_bucket}:{depth_bucket}",
                 "direction_move": f"{direction}:{move_bucket}",
