@@ -170,18 +170,28 @@ class MarketMonitor:
                 # Query the known 15-minute BTC contract slug directly first; Gamma's
                 # first page of active markets often omits these short-window contracts.
                 for start_at in slug_starts:
-                    expected_slug = f"cpc-btc-updown-15m-{start_at:%Y-%m-%d}-{start_at:%H%M}z"
-                    async with self.session.get(url, params={"slug": expected_slug}) as response:
-                        if response.status == 200:
-                            result = await response.json()
-                            if isinstance(result, list):
-                                # Some API responses ignore unknown query filters; verify
-                                # the returned slug locally before trusting the result.
-                                data.extend(
-                                    market for market in result
-                                    if isinstance(market, dict)
-                                    and str(market.get("slug") or "") == expected_slug
-                                )
+                    epoch_slug_time = int(start_at.timestamp())
+                    expected_slugs = [
+                        f"btc-updown-15m-{epoch_slug_time}",
+                        f"bitcoin-updown-15m-{epoch_slug_time}",
+                        f"cpc-btc-updown-15m-{start_at:%Y-%m-%d}-{start_at:%H%M}z",
+                    ]
+                    for expected_slug in expected_slugs:
+                        async with self.session.get(url, params={"slug": expected_slug}) as response:
+                            if response.status == 200:
+                                result = await response.json()
+                                if isinstance(result, list):
+                                    # Some API responses ignore unknown query filters; verify
+                                    # the returned slug locally before trusting the result.
+                                    data.extend(
+                                        market for market in result
+                                        if isinstance(market, dict)
+                                        and str(market.get("slug") or "") == expected_slug
+                                    )
+                        if data:
+                            break
+                    if data:
+                        break
                 if not data:
                     async with self.session.get(url, params={
                         "limit": 1000, "offset": 0, "active": "true", "closed": "false"
