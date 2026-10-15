@@ -139,10 +139,11 @@ class TradingBot:
         prediction_source = "btc_consensus" if abs(move) >= 0.001 and len(exchanges) >= 2 else "market_implied"
         direction = ("up" if move > 0 else "down") if prediction_source == "btc_consensus" else ("up" if midpoint >= 0.5 else "down")
         delay = max(0.0, now - self.opportunity_detector.last_polymarket_change)
-        confidence = min(0.99, max(0.01,
-            0.50 + min(abs(move) / 0.20, 1.0) * 0.20
-            + min(abs(midpoint - 0.5) / 0.5, 1.0) * 0.20
-            + (0.10 if len(exchanges) >= 2 else 0.0)))
+        confidence = (
+            self.opportunity_detector._calculate_confidence(abs(move), delay, odds_change, len(exchanges))
+            if exchanges else 0.50
+        )
+        confidence = min(0.99, max(0.01, float(confidence)))
         snapshot = SimpleNamespace(
             timestamp=now, market_id=market_id, checkpoint=checkpoint,
             time_remaining=remaining, minutes_remaining=remaining / 60.0,
@@ -160,15 +161,22 @@ class TradingBot:
         )
         decision = self.decision_connectome.predict(snapshot, role="decision")
         research = self.research_connectome.predict(snapshot, role="research")
-        self.decision_connectome.record_scan_observation(snapshot, role="decision", forecast_probability=decision["probability"])
-        self.research_connectome.record_scan_observation(snapshot, role="research", forecast_probability=research["probability"])
+        self.decision_connectome.record_scan_observation(
+            snapshot, role="decision", forecast_probability=decision["probability"],
+            forecast_up_probability=decision["up_probability"],
+        )
+        self.research_connectome.record_scan_observation(
+            snapshot, role="research", forecast_probability=research["probability"],
+            forecast_up_probability=research["up_probability"],
+        )
         logger.info(
             "CONNECTOME_SCAN market=%s checkpoint=%s remaining=%.1fs midpoint=%.4f "
             "odds_change_10s=%.4f btc_move_pct=%.4f direction=%s raw_score=%.3f "
-            "decision_p=%.3f decision_samples=%d research_p=%.3f research_samples=%d paper_trade=not_required",
+            "raw_score=%.3f decision_confidence=%.3f decision_up_p=%.3f decision_samples=%d "
+            "research_confidence=%.3f research_up_p=%.3f research_samples=%d paper_trade=not_required",
             market_id, checkpoint, remaining, midpoint, odds_change, abs(move), direction,
-            confidence, decision["probability"], decision["samples"],
-            research["probability"], research["samples"],
+            confidence, decision["probability"], decision["up_probability"], decision["samples"],
+            research["probability"], research["up_probability"], research["samples"],
         )
 
     async def _on_contract_settled(self, market_id: str, actual_up: bool):
