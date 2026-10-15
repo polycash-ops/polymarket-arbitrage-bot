@@ -274,7 +274,8 @@ class MarketMonitor:
                     point = PricePoint(
                         exchange="polymarket", price=up_price, timestamp=now,
                         volume=volume, bid=bid, ask=ask, market_id=slug,
-                        question=question, end_time=None if end_time == float("inf") else end_time
+                        question=question, end_time=None if end_time == float("inf") else end_time,
+                        yes_outcome_index=1 if outcome_order == "down_first" else 0
                     )
                     self.prices["polymarket"] = point
                     self.polymarket_market_key = slug
