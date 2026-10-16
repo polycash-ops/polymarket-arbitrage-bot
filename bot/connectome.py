@@ -38,6 +38,7 @@ class Connectome:
         self.min_samples_for_gate = 1  # begin updating with the first settled observation
         self.learning_rate = min(0.25, max(0.001, float(config.get("learning_rate", 0.03))))
         self._initialize()
+        self._initialize_postgres()
 
     def _connect(self):
         con = sqlite3.connect(self.db_path, timeout=15)
@@ -141,6 +142,183 @@ class Connectome:
             con.execute("INSERT OR REPLACE INTO metadata(key,value) VALUES('graph_name',?)", (self.name,))
             con.execute("INSERT OR REPLACE INTO metadata(key,value) VALUES('node_capacity',?)", (str(self.max_nodes),))
             con.execute("INSERT OR REPLACE INTO metadata(key,value) VALUES('edge_capacity',?)", (str(self.max_edges),))
+
+    def _pg_connect(self):
+        """Connect only to the explicitly configured paid PostgreSQL database."""
+        import psycopg
+        url = os.getenv("CONNECTOME_DATABASE_URL", "").strip()
+        if not url:
+            raise RuntimeError(
+                "CONNECTOME_DATABASE_URL is required; refusing to run with local-only graph persistence."
+            )
+        return psycopg.connect(url, connect_timeout=8)
+
+    def _initialize_postgres(self):
+        """Create durable graph tables and restore PostgreSQL state into the local working cache."""
+        with self._pg_connect() as pg:
+            pg.execute("""
+                CREATE TABLE IF NOT EXISTS connectome_nodes (
+                    graph_name TEXT NOT NULL, node_id TEXT NOT NULL, kind TEXT NOT NULL,
+                    signature TEXT NOT NULL, visits BIGINT NOT NULL DEFAULT 0,
+                    wins BIGINT NOT NULL DEFAULT 0, losses BIGINT NOT NULL DEFAULT 0,
+                    up_count BIGINT NOT NULL DEFAULT 0, down_count BIGINT NOT NULL DEFAULT 0,
+                    created_at DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    updated_at DOUBLE PRECISION NOT NULL,
+                    PRIMARY KEY (graph_name, node_id)
+                );
+                CREATE INDEX IF NOT EXISTS connectome_nodes_signature
+                    ON connectome_nodes(graph_name, kind, signature);
+                CREATE TABLE IF NOT EXISTS connectome_edges (
+                    graph_name TEXT NOT NULL, edge_id TEXT NOT NULL,
+                    source_id TEXT NOT NULL, target_id TEXT NOT NULL,
+                    weight DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    updates BIGINT NOT NULL DEFAULT 0, traversals BIGINT NOT NULL DEFAULT 0,
+                    weight_updates BIGINT NOT NULL DEFAULT 0, wins BIGINT NOT NULL DEFAULT 0,
+                    losses BIGINT NOT NULL DEFAULT 0, created_at DOUBLE PRECISION NOT NULL DEFAULT 0,
+                    updated_at DOUBLE PRECISION NOT NULL,
+                    PRIMARY KEY (graph_name, edge_id),
+                    UNIQUE (graph_name, source_id, target_id)
+                );
+                CREATE TABLE IF NOT EXISTS connectome_observations (
+                    graph_name TEXT NOT NULL, event_id TEXT NOT NULL, market_id TEXT,
+                    observed_at DOUBLE PRECISION NOT NULL, features_json TEXT NOT NULL,
+                    outcome INTEGER, actual_up INTEGER, settled_at DOUBLE PRECISION,
+                    PRIMARY KEY (graph_name, event_id)
+                );
+                CREATE INDEX IF NOT EXISTS connectome_observations_market
+                    ON connectome_observations(graph_name, market_id, observed_at);
+            """)
+            counts = pg.execute(
+                "SELECT (SELECT COUNT(*) FROM connectome_nodes WHERE graph_name=%s), "
+                "(SELECT COUNT(*) FROM connectome_edges WHERE graph_name=%s), "
+                "(SELECT COUNT(*) FROM connectome_observations WHERE graph_name=%s)",
+                (self.name, self.name, self.name),
+            ).fetchone()
+            has_persisted_state = any(int(value or 0) > 0 for value in counts)
+
+        if has_persisted_state:
+            self._restore_from_postgres()
+            logger.info("CONNECTOME_STORAGE graph=%s backend=paid_postgres action=restored", self.name)
+        else:
+            self._sync_full_to_postgres()
+            logger.info("CONNECTOME_STORAGE graph=%s backend=paid_postgres action=initialized", self.name)
+
+    def _restore_from_postgres(self):
+        """PostgreSQL is authoritative at startup; restore its rows into the SQLite working cache."""
+        with self._pg_connect() as pg:
+            nodes = pg.execute(
+                "SELECT node_id,kind,signature,visits,wins,losses,up_count,down_count,created_at,updated_at "
+                "FROM connectome_nodes WHERE graph_name=%s", (self.name,)
+            ).fetchall()
+            edges = pg.execute(
+                "SELECT edge_id,source_id,target_id,weight,updates,traversals,weight_updates,wins,losses,created_at,updated_at "
+                "FROM connectome_edges WHERE graph_name=%s", (self.name,)
+            ).fetchall()
+            observations = pg.execute(
+                "SELECT event_id,market_id,observed_at,features_json,outcome,actual_up,settled_at "
+                "FROM connectome_observations WHERE graph_name=%s", (self.name,)
+            ).fetchall()
+        with self._connect() as con:
+            con.execute("DELETE FROM observations")
+            con.execute("DELETE FROM edges")
+            con.execute("DELETE FROM nodes")
+            con.executemany(
+                "INSERT INTO nodes(node_id,kind,signature,visits,wins,losses,up_count,down_count,created_at,updated_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?)", nodes
+            )
+            con.executemany(
+                "INSERT INTO edges(edge_id,source_id,target_id,weight,updates,traversals,weight_updates,wins,losses,created_at,updated_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?,?)", edges
+            )
+            con.executemany(
+                "INSERT INTO observations(event_id,market_id,observed_at,features_json,outcome,actual_up,settled_at) "
+                "VALUES(?,?,?,?,?,?,?)", observations
+            )
+
+    def _sync_full_to_postgres(self):
+        """Bootstrap or repair the durable store from the local graph cache."""
+        with self._connect() as con:
+            nodes = [tuple(row) for row in con.execute(
+                "SELECT node_id,kind,signature,visits,wins,losses,up_count,down_count,created_at,updated_at FROM nodes"
+            ).fetchall()]
+            edges = [tuple(row) for row in con.execute(
+                "SELECT edge_id,source_id,target_id,weight,updates,traversals,weight_updates,wins,losses,created_at,updated_at FROM edges"
+            ).fetchall()]
+            observations = [tuple(row) for row in con.execute(
+                "SELECT event_id,market_id,observed_at,features_json,outcome,actual_up,settled_at FROM observations"
+            ).fetchall()]
+        with self._pg_connect() as pg:
+            pg.executemany(
+                "INSERT INTO connectome_nodes(graph_name,node_id,kind,signature,visits,wins,losses,up_count,down_count,created_at,updated_at) "
+                "VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(graph_name,node_id) DO UPDATE SET "
+                "kind=EXCLUDED.kind,signature=EXCLUDED.signature,visits=EXCLUDED.visits,wins=EXCLUDED.wins,"
+                "losses=EXCLUDED.losses,up_count=EXCLUDED.up_count,down_count=EXCLUDED.down_count,"
+                "created_at=EXCLUDED.created_at,updated_at=EXCLUDED.updated_at",
+                [(self.name, *row) for row in nodes]
+            )
+            pg.executemany(
+                "INSERT INTO connectome_edges(graph_name,edge_id,source_id,target_id,weight,updates,traversals,weight_updates,wins,losses,created_at,updated_at) "
+                "VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(graph_name,edge_id) DO UPDATE SET "
+                "source_id=EXCLUDED.source_id,target_id=EXCLUDED.target_id,weight=EXCLUDED.weight,updates=EXCLUDED.updates,"
+                "traversals=EXCLUDED.traversals,weight_updates=EXCLUDED.weight_updates,wins=EXCLUDED.wins,"
+                "losses=EXCLUDED.losses,created_at=EXCLUDED.created_at,updated_at=EXCLUDED.updated_at",
+                [(self.name, *row) for row in edges]
+            )
+            pg.executemany(
+                "INSERT INTO connectome_observations(graph_name,event_id,market_id,observed_at,features_json,outcome,actual_up,settled_at) "
+                "VALUES(%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(graph_name,event_id) DO UPDATE SET "
+                "market_id=EXCLUDED.market_id,observed_at=EXCLUDED.observed_at,features_json=EXCLUDED.features_json,"
+                "outcome=EXCLUDED.outcome,actual_up=EXCLUDED.actual_up,settled_at=EXCLUDED.settled_at",
+                [(self.name, *row) for row in observations]
+            )
+
+    def _sync_rows_to_postgres(self, observation_ids=(), node_ids=(), edge_ids=()):
+        """Commit only rows changed by the latest snapshot or verified settlement."""
+        observation_ids = list(dict.fromkeys(observation_ids))
+        node_ids = list(dict.fromkeys(node_ids))
+        edge_ids = list(dict.fromkeys(edge_ids))
+        if not (observation_ids or node_ids or edge_ids):
+            return
+        with self._connect() as con:
+            observations = [tuple(row) for row in con.execute(
+                "SELECT event_id,market_id,observed_at,features_json,outcome,actual_up,settled_at "
+                "FROM observations WHERE event_id IN (" + ",".join("?" for _ in observation_ids) + ")",
+                observation_ids
+            ).fetchall()] if observation_ids else []
+            nodes = [tuple(row) for row in con.execute(
+                "SELECT node_id,kind,signature,visits,wins,losses,up_count,down_count,created_at,updated_at "
+                "FROM nodes WHERE node_id IN (" + ",".join("?" for _ in node_ids) + ")",
+                node_ids
+            ).fetchall()] if node_ids else []
+            edges = [tuple(row) for row in con.execute(
+                "SELECT edge_id,source_id,target_id,weight,updates,traversals,weight_updates,wins,losses,created_at,updated_at "
+                "FROM edges WHERE edge_id IN (" + ",".join("?" for _ in edge_ids) + ")",
+                edge_ids
+            ).fetchall()] if edge_ids else []
+        with self._pg_connect() as pg:
+            pg.executemany(
+                "INSERT INTO connectome_nodes(graph_name,node_id,kind,signature,visits,wins,losses,up_count,down_count,created_at,updated_at) "
+                "VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(graph_name,node_id) DO UPDATE SET "
+                "kind=EXCLUDED.kind,signature=EXCLUDED.signature,visits=EXCLUDED.visits,wins=EXCLUDED.wins,"
+                "losses=EXCLUDED.losses,up_count=EXCLUDED.up_count,down_count=EXCLUDED.down_count,"
+                "created_at=EXCLUDED.created_at,updated_at=EXCLUDED.updated_at",
+                [(self.name, *row) for row in nodes]
+            )
+            pg.executemany(
+                "INSERT INTO connectome_edges(graph_name,edge_id,source_id,target_id,weight,updates,traversals,weight_updates,wins,losses,created_at,updated_at) "
+                "VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(graph_name,edge_id) DO UPDATE SET "
+                "source_id=EXCLUDED.source_id,target_id=EXCLUDED.target_id,weight=EXCLUDED.weight,updates=EXCLUDED.updates,"
+                "traversals=EXCLUDED.traversals,weight_updates=EXCLUDED.weight_updates,wins=EXCLUDED.wins,"
+                "losses=EXCLUDED.losses,created_at=EXCLUDED.created_at,updated_at=EXCLUDED.updated_at",
+                [(self.name, *row) for row in edges]
+            )
+            pg.executemany(
+                "INSERT INTO connectome_observations(graph_name,event_id,market_id,observed_at,features_json,outcome,actual_up,settled_at) "
+                "VALUES(%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(graph_name,event_id) DO UPDATE SET "
+                "market_id=EXCLUDED.market_id,observed_at=EXCLUDED.observed_at,features_json=EXCLUDED.features_json,"
+                "outcome=EXCLUDED.outcome,actual_up=EXCLUDED.actual_up,settled_at=EXCLUDED.settled_at",
+                [(self.name, *row) for row in observations]
+            )
 
     @staticmethod
     def _features(opportunity: Any, role: str) -> Dict[str, str]:
@@ -490,6 +668,7 @@ class Connectome:
                     edge_pairs.append((prior_id, node_ids[kind]))
             new_edges = 0
             updated_edges = 0
+            touched_edge_ids = []
             for source, target in edge_pairs:
                 if source == target:
                     continue
@@ -497,6 +676,7 @@ class Connectome:
                 exists = con.execute("SELECT 1 FROM edges WHERE edge_id=?", (edge_id,)).fetchone()
                 if exists:
                     con.execute("UPDATE edges SET traversals=traversals+1,updated_at=? WHERE edge_id=?", (now, edge_id))
+                    touched_edge_ids.append(edge_id)
                     updated_edges += 1
                     continue
                 count = con.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
@@ -506,6 +686,7 @@ class Connectome:
                     "INSERT INTO edges(edge_id,source_id,target_id,weight,traversals,created_at,updated_at) VALUES(?,?,?,?,?,?,?)",
                     (edge_id, source, target, 0.0, 1, now, now),
                 )
+                touched_edge_ids.append(edge_id)
                 new_edges += 1
             logger.info(
                 "CONNECTOME_SNAPSHOT graph=%s market=%s event=%s features=%d nodes_touched=%d "
@@ -514,6 +695,7 @@ class Connectome:
                 sum(1 for node_id in node_ids.values() if con.execute("SELECT visits FROM nodes WHERE node_id=?", (node_id,)).fetchone()[0] == 1),
                 new_edges, updated_edges, bool(previous_row),
             )
+        self._sync_rows_to_postgres(observation_ids=[event_id], node_ids=list(node_ids.values()), edge_ids=touched_edge_ids)
         return event_id
 
     def predict(self, opportunity: Any, role: str = "decision") -> Dict[str, Any]:
@@ -598,6 +780,8 @@ class Connectome:
         """Apply each verified binary outcome once; return False for duplicate/missing events."""
         outcome = 1 if won else 0
         now = time.time()
+        node_ids = []
+        edge_ids = []
         with self._connect() as con:
             row = con.execute("SELECT features_json,outcome FROM observations WHERE event_id=?", (event_id,)).fetchone()
             if not row or row["outcome"] is not None:
@@ -623,6 +807,7 @@ class Connectome:
                                    (source, target)).fetchone()
                 if not edge:
                     continue
+                edge_ids.append(str(edge["edge_id"]))
                 old_weight = float(edge["weight"])
                 target_weight = 1.0 if outcome else -1.0
                 new_weight = old_weight + self.learning_rate * (target_weight - old_weight)
@@ -630,6 +815,7 @@ class Connectome:
                     "UPDATE edges SET weight=?,weight_updates=weight_updates+1,wins=wins+?,losses=losses+?,updated_at=? WHERE edge_id=?",
                     (new_weight, outcome, 1 - outcome, now, edge["edge_id"]),
                 )
+        self._sync_rows_to_postgres(observation_ids=[event_id], node_ids=node_ids, edge_ids=edge_ids)
         logger.info("CONNECTOME_LEARNING graph=%s event=%s outcome=%s", self.name, event_id, outcome)
         return True
 
