@@ -87,6 +87,17 @@ h1{font-size:clamp(1.5rem,4vw,2.2rem);line-height:1.15;margin:0 0 8px;letter-spa
  <div class="section-head"><div><h2>Recent reservoir observations</h2><p class="small">UP/DOWN probabilities estimate which side wins at contract expiry relative to that contract’s price to beat. Price to beat is the BTC reference price recorded for the contract.</p></div><span class="small" id="refreshTime">Waiting for first refresh</span></div>
  <div class="table-wrap"><table><thead><tr><th>Captured</th><th>Timeframe</th><th>Checkpoint</th><th>Contract</th><th>Forecast</th><th>UP probability</th><th>DOWN probability</th><th>Price to beat</th><th>Market midpoint</th><th>Outcome</th><th>Brier</th><th>Learned</th></tr></thead><tbody id="bioRows"><tr><td colspan="12" class="empty">Connecting to reservoir telemetry…</td></tr></tbody></table></div>
 </div></section>
+<section class="section panel"><div class="panel-inner">
+ <div class="section-head"><div><h2>Verified contracts</h2><p class="small">Only contracts with an explicit verified UP/DOWN settlement are listed. Pending or inferred outcomes are excluded.</p></div><span class="small" id="verifiedRefresh">Waiting for verified outcomes</span></div>
+ <div class="cards" style="margin-bottom:12px">
+  <article class="card"><div class="metric-label">Verified outcomes</div><div class="metric" id="verifiedCount">—</div></article>
+  <article class="card"><div class="metric-label">Correct forecasts</div><div class="metric" id="verifiedCorrect">—</div></article>
+  <article class="card"><div class="metric-label">Directional accuracy</div><div class="metric" id="verifiedAccuracy">—</div></article>
+  <article class="card"><div class="metric-label">Mean Brier score</div><div class="metric" id="verifiedBrier">—</div></article>
+  <article class="card"><div class="metric-label">Last verified</div><div class="metric" id="verifiedLast">—</div></article>
+ </div>
+ <div class="table-wrap"><table><thead><tr><th>Contract</th><th>Timeframe</th><th>Checkpoint</th><th>Forecast</th><th>UP probability</th><th>Verified outcome</th><th>Correct</th><th>Brier</th><th>Learning update</th><th>Settlement source</th><th>Verified at</th></tr></thead><tbody id="verifiedRows"><tr><td colspan="11" class="empty">Loading verified contracts…</td></tr></tbody></table></div>
+</div></section>
 <p class="foot">This dashboard reads only the Biological Reservoir research tables. It does not start or control the Polymarket arbitrage bot. All activity is research-only; live trading is hard-blocked.</p>
 </main>
 <script>
@@ -141,7 +152,17 @@ async function refreshLiveQuotes(){
  }catch(e){put("quoteRefresh","Live quote refresh failed: "+String(e.message||e))}
 }
 
-clock();setInterval(clock,1000);refreshReservoir();setInterval(refreshReservoir,10000);refreshLiveQuotes();setInterval(refreshLiveQuotes,5000);
+async function refreshVerifiedContracts(){
+ try{
+  const r=await fetch("/api/verified-contracts?ts="+Date.now(),{cache:"no-store"});const d=await r.json();if(!r.ok)throw new Error(d.message||("HTTP "+r.status));
+  const m=d.metrics||{};put("verifiedCount",m.verified??0);put("verifiedCorrect",m.correct==null?"—":m.correct+" / "+(m.verified??0));put("verifiedAccuracy",m.accuracy_pct==null?"—":Number(m.accuracy_pct).toFixed(1)+"%");put("verifiedBrier",m.mean_brier==null?"—":Number(m.mean_brier).toFixed(5));put("verifiedLast",fmtTime(m.last_verified_at));
+  const body=el("verifiedRows");body.replaceChildren();const rows=Array.isArray(d.contracts)?d.contracts:[];
+  if(!rows.length){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=11;td.className="empty";td.textContent="No explicitly verified reservoir outcomes yet. Pending contracts are intentionally excluded.";tr.appendChild(td);body.appendChild(tr)}
+  rows.forEach(x=>{const tr=document.createElement("tr");const vals=[x.market_slug||"—",x.timeframe||"—",x.checkpoint||"—",x.forecast_direction||"—",x.probability_up==null?"—":(100*Number(x.probability_up)).toFixed(1)+"%",x.outcome||"—",x.correct==null?"—":(x.correct?"YES":"NO"),x.brier_score==null?"—":Number(x.brier_score).toFixed(5),x.learning_update_applied?"YES":"NO",x.settlement_source||"Explicit settlement recorded",fmtTime(x.verified_at)];vals.forEach(v=>{const td=document.createElement("td");td.textContent=String(v);tr.appendChild(td)});body.appendChild(tr)});
+  put("verifiedRefresh","Updated "+new Date().toLocaleTimeString("en-US",{timeZone:"America/New_York"})+" ET");
+ }catch(e){put("verifiedRefresh","Could not load verified outcomes: "+String(e.message||e))}
+}
+clock();setInterval(clock,1000);refreshReservoir();setInterval(refreshReservoir,10000);refreshLiveQuotes();setInterval(refreshLiveQuotes,5000);refreshVerifiedContracts();setInterval(refreshVerifiedContracts,15000);
 </script></body></html>"""
 
 
@@ -198,6 +219,54 @@ def biological_reservoir_status():
     except Exception as exc:
         logging.exception("Biological Reservoir telemetry endpoint failed")
         return jsonify({"ok": False, "status": "ERROR", "message": type(exc).__name__ + ": " + str(exc), "model": None, "observations": {}, "recent": []}), 500
+
+
+@app.get("/api/verified-contracts")
+def verified_contracts():
+    """List only reservoir records carrying an explicit verified UP/DOWN outcome."""
+    url = os.getenv("CONNECTOME_DATABASE_URL")
+    if not url:
+        return jsonify({"ok": False, "message": "CONNECTOME_DATABASE_URL is not configured.", "metrics": {}, "contracts": []}), 503
+    try:
+        import psycopg
+        from psycopg.rows import dict_row
+        with psycopg.connect(url, connect_timeout=4, row_factory=dict_row) as conn:
+            exists = conn.execute("SELECT to_regclass('public.biological_reservoir_observations') AS obs_table").fetchone()
+            if not exists or not exists["obs_table"]:
+                return jsonify({"ok": True, "metrics": {"verified": 0, "correct": 0, "accuracy_pct": None, "mean_brier": None, "last_verified_at": None}, "contracts": []})
+            metrics = conn.execute("""
+                SELECT count(*) AS verified,
+                       count(*) FILTER (WHERE upper(forecast_direction)=upper(outcome)) AS correct,
+                       avg(brier_score) FILTER (WHERE brier_score IS NOT NULL) AS mean_brier,
+                       max(NULLIF(details->>'settled_at','')::timestamptz) AS last_verified_at
+                FROM biological_reservoir_observations
+                WHERE outcome IN ('UP','DOWN') AND details ? 'settlement_source'
+            """).fetchone()
+            rows = conn.execute("""
+                SELECT o.market_slug, o.captured_at, o.checkpoint, o.forecast_direction,
+                       o.probability_up, o.outcome, o.brier_score, o.learning_update_applied,
+                       o.details->>'settlement_source' AS settlement_source,
+                       NULLIF(o.details->>'settled_at','')::timestamptz AS verified_at,
+                       o.details->>'contract_timeframe' AS timeframe,
+                       (upper(o.forecast_direction)=upper(o.outcome)) AS correct
+                FROM biological_reservoir_observations o
+                WHERE o.outcome IN ('UP','DOWN') AND o.details ? 'settlement_source'
+                ORDER BY NULLIF(o.details->>'settled_at','')::timestamptz DESC NULLS LAST,
+                         o.captured_at DESC
+                LIMIT 200
+            """).fetchall()
+        n = int(metrics["verified"] or 0)
+        correct = int(metrics["correct"] or 0)
+        return jsonify({"ok": True, "research_only": True, "live_trading_enabled": False,
+            "metrics": {"verified": n, "correct": correct,
+                "accuracy_pct": round(100 * correct / n, 2) if n else None,
+                "mean_brier": round(float(metrics["mean_brier"]), 5) if metrics["mean_brier"] is not None else None,
+                "last_verified_at": metrics["last_verified_at"]},
+            "contracts": rows})
+    except Exception as exc:
+        logging.exception("Verified contracts endpoint failed")
+        return jsonify({"ok": False, "message": type(exc).__name__ + ": " + str(exc),
+                        "metrics": {}, "contracts": []}), 500
 
 
 def _get_json(url, timeout=4, headers=None):
