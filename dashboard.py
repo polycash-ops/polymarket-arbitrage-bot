@@ -95,6 +95,12 @@ h1{font-size:clamp(1.5rem,4vw,2.2rem);line-height:1.15;margin:0 0 8px;letter-spa
  <div class="table-wrap"><table><thead><tr><th>Graph</th><th>Saved runs</th><th>Latest run (UTC)</th><th>Validation samples</th><th>Market baseline Brier</th><th>Candidate Brier</th><th>Changed edges</th><th>Result</th></tr></thead><tbody id="trainingRows"><tr><td colspan="8" class="empty">Waiting for persisted training runs</td></tr></tbody></table></div>
 </div></section>
 <section class="section panel"><div class="panel-inner">
+ <div class="section-head"><h2>Independent Live-Trading Readiness Model</h2><span class="small" id="readinessSummary">Waiting for saved readiness audits…</span></div>
+ <p class="small">A separate auditor evaluates each Connectome against the requested targets. Forecast win rate is not a trading win rate. Daily/monthly returns, drawdown, and trades/day require an authoritative realized-trade ledger; they are not inferred from quote simulations. This report never enables live trading.</p>
+ <div class="table-wrap"><table><thead><tr><th>Connectome</th><th>Overall readiness</th><th>Settled contracts</th><th>Forecast win rate</th><th>Forecast Brier</th><th>Market Brier</th><th>Daily return target 3.2%</th><th>Monthly return target 140%</th><th>Max drawdown under 5%</th><th>Trades/day target 240</th><th>Candidate applied</th></tr></thead><tbody id="readinessRows"><tr><td colspan="11" class="empty">Waiting for readiness reports</td></tr></tbody></table></div>
+ <div class="table-wrap" style="margin-top:12px"><table><thead><tr><th>Connectome</th><th>Readiness check</th><th>Status</th><th>Actual evidence</th><th>Required target / note</th></tr></thead><tbody id="readinessGateRows"><tr><td colspan="5" class="empty">Waiting for readiness gates</td></tr></tbody></table></div>
+</div></section>
+<section class="section panel"><div class="panel-inner">
  <div class="section-head"><h2>Entry timing experiment · contract-aligned</h2><span class="small" id="entryTimingSummary">Waiting for settled contracts…</span></div>
  <p class="small">Each contract contributes at most one snapshot per timing bucket. Returns estimate buying UP at the observed ask or DOWN at 1 − UP bid, then settling to $1/$0. These are quote-based research estimates—not verified fills—and exclude fees, slippage and latency. “Best” is provisional until tested on a later chronological holdout.</p>
  <div class="table-wrap"><table><thead><tr><th>Connectome</th><th>Entry timing</th><th>Contracts</th><th>Directional accuracy</th><th>Up-probability Brier</th><th>Priced entries</th><th>Mean return / $1</th><th>Profitable entries</th></tr></thead><tbody id="entryTimingRows"><tr><td colspan="8" class="empty">Waiting for settled contract snapshots</td></tr></tbody></table></div>
@@ -188,7 +194,42 @@ function paintConnectomes(graphs){
   });
   put("trainingSummary",runs+" saved walk-forward runs across three graphs");
  }
- const entryBody=el("entryTimingRows");
+ const readinessBody=el("readinessRows"),gateBody=el("readinessGateRows");
+  const readinessNames=[["decision","Decision"],["research","Research"],["analysis","Analysis"]];
+  let readyReports=0,gateCount=0;
+  if(readinessBody&&gateBody){
+   readinessBody.replaceChildren();gateBody.replaceChildren();
+   const statusText=(v)=>String(v??"NOT_MEASURABLE").replaceAll("_"," ");
+   const statusCell=(v)=>{const td=document.createElement("td");td.textContent=statusText(v);td.style.fontWeight="700";if(v==="PASS")td.style.color="#54d6a0";else if(v==="FAIL"||v==="NOT_READY"||v==="BLOCKED")td.style.color="#ff8585";else td.style.color="#ffd078";return td};
+   readinessNames.forEach(([key,label])=>{
+    const g=graphs&&graphs[key]||{},report=g.readiness||{},e=report.evidence||{},checks=report.checks||{},trade=report.trade_metrics||{};
+    if(report.generated_at)readyReports++;
+    const tr=document.createElement("tr");
+    const vals=[label,statusText(report.overall_status||"REPORT UNAVAILABLE"),fmt(e.settled_contracts||0),
+      pct(e.contract_forecast_win_rate),num(e.contract_forecast_brier)===null?"—":Number(e.contract_forecast_brier).toFixed(4),
+      num(e.market_baseline_brier)===null?"—":Number(e.market_baseline_brier).toFixed(4),
+      trade.daily_return===null||trade.daily_return===undefined?"NOT MEASURABLE":pct(trade.daily_return),
+      trade.monthly_return===null||trade.monthly_return===undefined?"NOT MEASURABLE":pct(trade.monthly_return),
+      trade.max_drawdown===null||trade.max_drawdown===undefined?"NOT MEASURABLE":pct(trade.max_drawdown),
+      trade.trades_per_day===null||trade.trades_per_day===undefined?"NOT MEASURABLE":fmt(trade.trades_per_day),
+      checks.candidate_model_actively_applied&&checks.candidate_model_actively_applied.actual===true?"YES":"NO"];
+    vals.forEach((value,i)=>{const td=document.createElement("td");td.textContent=String(value);if(i===1)td.style.fontWeight="700";tr.appendChild(td)});
+    readinessBody.appendChild(tr);
+    Object.entries(checks).forEach(([check,v])=>{
+     gateCount++;const row=document.createElement("tr");
+     const actual=(v.actual===null||v.actual===undefined)?"Not recorded":
+       (typeof v.actual==="number"&&check.toLowerCase().includes("rate")?pct(v.actual):
+       (typeof v.actual==="number"&&check.toLowerCase().includes("brier")?Number(v.actual).toFixed(4):String(v.actual)));
+     const target=v.target!==undefined?pct(v.target):v.required!==undefined?String(v.required):v.target_exclusive_max!==undefined?"< "+pct(v.target_exclusive_max):(v.note||"See report");
+     [label,check.replaceAll("_"," "),statusCell(v.status),actual,target].forEach((value,i)=>{if(i===2)row.appendChild(value);else{const td=document.createElement("td");td.textContent=String(value);row.appendChild(td)}});
+     gateBody.appendChild(row);
+    });
+   });
+   if(!readyReports){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=11;td.className="empty";td.textContent="No persisted readiness report available yet.";tr.appendChild(td);readinessBody.appendChild(tr)}
+   if(!gateCount){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=5;td.className="empty";td.textContent="No readiness checks available.";tr.appendChild(td);gateBody.appendChild(tr)}
+   put("readinessSummary",readyReports+" saved readiness reports · "+(readinessNames.length-readyReports)+" unavailable · live trading remains disabled");
+  }
+  const entryBody=el("entryTimingRows");
  if(entryBody){
   entryBody.replaceChildren();
   const names=[["decision","Decision"],["research","Research"],["analysis","Analysis"]];
