@@ -55,7 +55,7 @@ h1{font-size:clamp(1.5rem,4vw,2.2rem);line-height:1.15;margin:0 0 8px;letter-spa
 </style>
 </head>
 <body><main>
-<header><div><h1>BTC Polymarket Connectome Trend Research</h1><p class="subtitle">Three independent Connectomes · 5-second quote snapshots · 15m and hourly directional forecasting · trade execution disabled</p></div><span class="pill"><span class="dot"></span> FORECAST-ONLY MODE</span></header>
+<header><div><h1>BTC Polymarket Connectome Trend Research</h1><p class="subtitle">Three independent Connectomes · 5-second quote snapshots · 15m and hourly directional forecasting · trade execution disabled</p></div><div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:10px"><span id="dashboardClock" class="pill" style="font-variant-numeric:tabular-nums">--:--:-- ET</span><span class="pill"><span class="dot"></span> FORECAST-ONLY MODE</span></div></header>
 <div id="error" role="alert"></div>
 
 <section class="section panel" id="biologicalReservoirPanel"><div class="panel-inner">
@@ -412,7 +412,9 @@ async function refresh(){
   if(d.bot_error){el("error").textContent="Bot error: "+d.bot_error;el("error").style.display="block"}
  }catch(e){el("error").textContent="Unable to refresh dashboard data: "+String(e);el("error").style.display="block";put("updated","Refresh failed")}
 }
+function updateDashboardClock(){const n=document.getElementById("dashboardClock");if(n)n.textContent=new Intl.DateTimeFormat("en-US",{timeZone:"America/New_York",hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:true}).format(new Date())+" ET"}
 window.addEventListener("resize",()=>{if(window._lastEquityCurve)drawProfitCurve(window._lastEquityCurve)});
+updateDashboardClock();setInterval(updateDashboardClock,1000);
 refresh();refreshBiologicalReservoir();setInterval(refresh,5000);setInterval(refreshBiologicalReservoir,10000);
 </script></body></html>"""
 
@@ -452,7 +454,10 @@ def biological_reservoir_status():
                 learning_update_applied FROM biological_reservoir_observations
                 ORDER BY captured_at DESC, snapshot_id DESC LIMIT 30""").fetchall()
         settled = int(stats["settled"] or 0)
-        latest = model["updated_at"] or stats["latest_at"]
+        # Use whichever persisted heartbeat is newer: model-state writes can lag
+        # while the worker continues appending observation snapshots.
+        timestamps = [value for value in (model["updated_at"], stats["latest_at"]) if value is not None]
+        latest = max(timestamps) if timestamps else None
         age = max(0, (datetime.now().astimezone() - latest.astimezone()).total_seconds()) if latest else None
         status = "WORKING" if age is not None and age <= 30 else "RECENT ACTIVITY" if age is not None and age <= 180 else "STALE" if age is not None else "INITIALIZING"
         return jsonify({"ok": True, "status": status, "research_only": True, "live_trading_enabled": False,
