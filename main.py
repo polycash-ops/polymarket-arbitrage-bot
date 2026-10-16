@@ -44,6 +44,7 @@ class TradingBot:
         self.last_market_quote_by_id = {}
         self.last_quote_change_by_id = {}
         self.latest_analysis_forecasts = {}
+        self._entry_timing_cache = {}
         self.last_connectome_snapshot_at = {}
         self.last_connectome_remaining = {}
         self.stats = {
@@ -535,6 +536,23 @@ class TradingBot:
     def get_status(self) -> Dict[str, Any]:
         performance = self.trade_executor.get_performance_report()
         latest_prices = self.market_monitor.get_latest_prices()
+        # Cache scoring because the dashboard polls every five seconds.
+        entry_timing = {}
+        timing_now = time.time()
+        for graph_key, graph in (
+            ("decision", self.decision_connectome),
+            ("research", self.research_connectome),
+            ("analysis", self.analysis_connectome),
+        ):
+            cached = self._entry_timing_cache.get(graph_key)
+            if cached is None or timing_now - cached["at"] >= 30.0:
+                try:
+                    result = summarize_entry_timing(graph)
+                except Exception:
+                    logger.exception("CONNECTOME_ENTRY_TIMING_FAILED graph=%s", graph_key)
+                    result = {"buckets": [], "settled_contracts": 0, "best_entry_bucket": None}
+                self._entry_timing_cache[graph_key] = {"at": timing_now, "data": result}
+            entry_timing[graph_key] = self._entry_timing_cache[graph_key]["data"]
         return {
             "uptime_hours": (time.time() - self.stats["start_time"]) / 3600,
             "mode": "paper",
@@ -564,9 +582,9 @@ class TradingBot:
             "latest_analysis_forecasts": self.latest_analysis_forecasts,
             "price_spreads": self.market_monitor.get_price_spread(),
             "connectomes": {
-                "decision": {**self.decision_connectome.stats(), "training": walk_forward_status(self.decision_connectome), "entry_timing": summarize_entry_timing(self.decision_connectome)},
-                "research": {**self.research_connectome.stats(), "training": walk_forward_status(self.research_connectome), "entry_timing": summarize_entry_timing(self.research_connectome)},
-                "analysis": {**self.analysis_connectome.stats(), "training": walk_forward_status(self.analysis_connectome), "entry_timing": summarize_entry_timing(self.analysis_connectome)},
+                "decision": {**self.decision_connectome.stats(), "training": walk_forward_status(self.decision_connectome), "entry_timing": entry_timing["decision"]},
+                "research": {**self.research_connectome.stats(), "training": walk_forward_status(self.research_connectome), "entry_timing": entry_timing["research"]},
+                "analysis": {**self.analysis_connectome.stats(), "training": walk_forward_status(self.analysis_connectome), "entry_timing": entry_timing["analysis"]},
             },
             "recent_opportunities": len(self.opportunity_detector.get_recent_opportunities(60)),
         }
