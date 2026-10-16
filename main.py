@@ -18,7 +18,7 @@ from bot.trade_executor import Trade, TradeExecutor
 from bot.walk_forward import run_if_due as run_walk_forward_if_due, status as walk_forward_status
 from bot.entry_timing import summarize as summarize_entry_timing
 from bot.readiness_model import build_report as build_readiness_report
-from bot.candidate_profiles import persist_with_graph as persist_candidate_profiles
+from bot.candidate_profiles import persist_with_graph as persist_candidate_profiles, load_latest as load_saved_candidate_profiles
 
 Path("logs").mkdir(parents=True, exist_ok=True)
 logging.basicConfig(
@@ -588,10 +588,23 @@ class TradingBot:
         if cached_profiles is None or candidate_now - cached_profiles["at"] >= 300.0:
             try:
                 profile = persist_candidate_profiles(self.decision_connectome, timing_by_graph, readiness_by_graph)
+                # Restore the last saved registry if timing evidence is temporarily unavailable.
+                if not profile.get("top_five"):
+                    restored = load_saved_candidate_profiles(self.decision_connectome)
+                    if restored.get("top_five"):
+                        profile["top_five"] = restored["top_five"]
+                        profile["restored_from_database"] = True
+                        profile["profile_persistence"] = restored.get("profile_persistence", profile.get("profile_persistence"))
+                else:
+                    profile["restored_from_database"] = False
             except Exception as exc:
                 logger.exception("CONNECTOME_CANDIDATE_PROFILE_FAILED")
-                profile = {"top_five": [], "profile_persistence": "FAILED",
-                           "live_trading_enabled": False, "error": str(exc)}
+                try:
+                    profile = load_saved_candidate_profiles(self.decision_connectome)
+                    profile["restored_from_database"] = bool(profile.get("top_five"))
+                except Exception:
+                    profile = {"top_five": [], "profile_persistence": "FAILED",
+                               "live_trading_enabled": False, "error": str(exc)}
             self._candidate_profile_cache["global"] = {"at": candidate_now, "data": profile}
         global_candidates = self._candidate_profile_cache["global"]["data"]
         for graph_key, graph in graph_items:
