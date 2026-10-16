@@ -24,7 +24,7 @@ def summarize(graph, min_samples=5):
             "SELECT market_id,observed_at,settled_at,features_json,actual_up "
             "FROM observations WHERE outcome IS NOT NULL AND actual_up IS NOT NULL "
             "AND settled_at IS NOT NULL AND market_id IS NOT NULL "
-            "ORDER BY observed_at ASC"
+            "ORDER BY observed_at DESC LIMIT 50000) ORDER BY observed_at ASC"
         ).fetchall()
 
     contracts = defaultdict(list)
