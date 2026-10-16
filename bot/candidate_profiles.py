@@ -3,6 +3,7 @@
 Top-five rankings are exploratory candidates only. Profiles are updated from settled
 contract evidence and never enable or modify live execution.
 """
+import hashlib
 import json
 import logging
 from datetime import datetime, timezone
@@ -86,6 +87,55 @@ def persist_with_graph(graph, entry_timing_by_graph, readiness_by_graph=None):
                     "priced_entries": metric.get("priced_entries"),
                     "ranking_eligible": eligible,
                     "metric_source": "historical_quotes_estimated_binary_settlement",
+                    "fees_included": False, "slippage_included": False, "verified_fills": False,
+                },
+                "readiness": {"overall_status": readiness.get("overall_status", "NOT_READY"),
+                              "live_trading_enabled": False},
+                "performance_targets": TARGETS, "profile_updated_at": now.isoformat(),
+                "status": "PROVISIONAL_CANDIDATE" if eligible else "COLLECTING_DATA",
+                "rank": None, "ranking_score": float(ret) if ret is not None else -999.0,
+            }
+            candidates.append(candidate)
+        # Register concrete multi-signal arrangements as independent candidates.
+        # The combo key hashes to a stable ID; rank changes never change identity.
+        for combo in timing.get("combo_candidates", []):
+            combo_key = str(combo.get("combo_key") or "")
+            if not combo_key:
+                continue
+            digest = hashlib.sha1(combo_key.encode("utf-8")).hexdigest()[:12]
+            n = int(combo.get("contracts") or 0)
+            ret = combo.get("mean_return_per_dollar")
+            eligible = n >= MIN_CONTRACTS_FOR_RANKING and ret is not None
+            features = combo.get("features") or []
+            feature_label = " + ".join(
+                str(item.get("name")) + "=" + str(item.get("value"))
+                for item in features
+            )
+            checkpoint = str(combo.get("checkpoint") or "unknown")
+            candidate = {
+                "candidate_id": graph_key + ":combo:" + digest + ":v1",
+                "display_name": GRAPH_LABELS[graph_key] + " — " + checkpoint + " combo: " + feature_label,
+                "strategy_version": 1,
+                "graph_key": graph_key,
+                "graph_name": GRAPH_LABELS[graph_key],
+                "strategy_type": "checkpoint_signal_combination",
+                "settings": {
+                    "checkpoint": checkpoint,
+                    "feature_combination": features,
+                    "combo_key": combo_key,
+                    "evaluation_unit": "one_snapshot_per_settled_contract_per_combo",
+                    "minimum_contracts_for_provisional_ranking": MIN_CONTRACTS_FOR_RANKING,
+                    "minimum_contracts_for_readiness_review": MIN_CONTRACTS_FOR_READINESS,
+                    "execution_enabled": False,
+                    "live_trading_enabled": False,
+                },
+                "metrics": {
+                    "settled_contracts": n, "accuracy": combo.get("accuracy"),
+                    "brier": combo.get("brier"), "estimated_return_per_dollar": ret,
+                    "positive_return_rate": combo.get("positive_return_rate"),
+                    "priced_entries": combo.get("priced_entries"),
+                    "ranking_eligible": eligible,
+                    "metric_source": combo.get("metric_source", "historical_quotes_estimated_binary_settlement"),
                     "fees_included": False, "slippage_included": False, "verified_fills": False,
                 },
                 "readiness": {"overall_status": readiness.get("overall_status", "NOT_READY"),
