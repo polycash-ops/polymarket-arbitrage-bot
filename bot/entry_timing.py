@@ -106,8 +106,83 @@ def summarize(graph, min_samples=30):
                 (1, -int(x["bucket"].split("m_")[0])))
     eligible = [x for x in output if x["eligible"] and x["mean_return_per_dollar"] is not None]
     best = max(eligible, key=lambda x: x["mean_return_per_dollar"]) if eligible else None
+    # Evaluate explicit feature combinations, not only single timing indicators.
+    # Select at most one snapshot per contract per checkpoint, then group contracts
+    # by exact categorical signal combinations to avoid counting repeated refreshes.
+    from itertools import combinations
+    combo_fields = [
+        ("midpoint", "midpoint_fine"), ("depth", "depth"),
+        ("odds_momentum", "odds_momentum"), ("exchange_relationship", "exchange_relationship"),
+        ("consensus", "consensus"), ("direction", "direction"),
+    ]
+    checkpoint_targets = [("10m", 600), ("5m", 300), ("3m", 180), ("1m", 60)]
+    combo_groups = defaultdict(dict)
+    for market_id, snapshots in contracts.items():
+        snapshots.sort(key=lambda x: x["observed_at"])
+        chosen = [("first_seen", snapshots[0])]
+        for label, target in checkpoint_targets:
+            eligible = [s for s in snapshots if abs(s["remaining"] - target) <= 45]
+            if eligible:
+                chosen.append((label, min(eligible, key=lambda s: abs(s["remaining"] - target))))
+        for checkpoint, snap in chosen:
+            f = snap["features"]
+            available = [(name, f.get(key)) for name, key in combo_fields
+                         if f.get(key) not in (None, "", "unknown", "unavailable")]
+            for width in (2, 3):
+                for fields in combinations(available, width):
+                    names = tuple(x[0] for x in fields)
+                    signature = tuple(str(x[1]) for x in fields)
+                    combo_id = checkpoint + "|" + "|".join(
+                        [name + "=" + value for name, value in zip(names, signature)])
+                    existing = combo_groups[combo_id].get(market_id)
+                    target = dict(checkpoint_targets).get(checkpoint, snap["remaining"])
+                    sample = {"snapshot": snap, "checkpoint": checkpoint, "fields": list(names),
+                              "signature": list(signature), "distance": abs(snap["remaining"] - target)}
+                    if existing is None or sample["distance"] < existing["distance"]:
+                        combo_groups[combo_id][market_id] = sample
+    combo_candidates = []
+    for combo_id, by_market in combo_groups.items():
+        samples = [v["snapshot"] for v in by_market.values()]
+        if not samples:
+            continue
+        correct = 0
+        brier = 0.0
+        pnl = []
+        for sample in samples:
+            f = sample["features"]
+            actual_up = sample["actual_up"]
+            up_p = sample["up_p"]
+            predicted_up = up_p >= 0.5
+            correct += int(predicted_up == actual_up)
+            brier += (up_p - int(actual_up)) ** 2
+            entry = f.get("_snapshot_ask") if predicted_up else (
+                1.0 - f.get("_snapshot_bid") if f.get("_snapshot_bid") is not None else None)
+            try:
+                entry = float(entry) if entry is not None else None
+            except (TypeError, ValueError):
+                entry = None
+            if entry is not None and 0.0 < entry < 1.0:
+                pnl.append((1.0 / entry - 1.0) if predicted_up == actual_up else -1.0)
+        n = len(samples)
+        first = next(iter(by_market.values()))
+        combo_candidates.append({
+            "combo_key": combo_id, "checkpoint": first["checkpoint"],
+            "features": [{"name": name, "value": value}
+                         for name, value in zip(first["fields"], first["signature"])],
+            "contracts": n, "accuracy": correct / n, "brier": brier / n,
+            "priced_entries": len(pnl),
+            "mean_return_per_dollar": sum(pnl) / len(pnl) if pnl else None,
+            "positive_return_rate": sum(1 for x in pnl if x > 0) / len(pnl) if pnl else None,
+            "eligible": n >= min_samples,
+            "metric_source": "one_sample_per_settled_contract_exact_feature_combo_quote_estimate",
+        })
+    combo_candidates.sort(key=lambda x: (
+        x["contracts"] >= min_samples, x["mean_return_per_dollar"] is not None,
+        x["mean_return_per_dollar"] if x["mean_return_per_dollar"] is not None else -999,
+        x["accuracy"], -x["brier"]), reverse=True)
     return {
-        "method": "one_observation_per_contract_per_entry_bucket",
+        "method": "one_observation_per_contract_per_entry_bucket_plus_explicit_feature_combinations",
+        "combo_candidates": combo_candidates,
         "settled_contracts": len(contracts),
         "minimum_contracts_per_bucket": min_samples,
         "buckets": output,
