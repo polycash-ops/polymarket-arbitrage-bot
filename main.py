@@ -17,6 +17,7 @@ from bot.opportunity_detector import Opportunity, OpportunityDetector
 from bot.trade_executor import Trade, TradeExecutor
 from bot.walk_forward import run_if_due as run_walk_forward_if_due, status as walk_forward_status
 from bot.entry_timing import summarize as summarize_entry_timing
+from bot.readiness_model import build_report as build_readiness_report
 
 Path("logs").mkdir(parents=True, exist_ok=True)
 logging.basicConfig(
@@ -45,6 +46,7 @@ class TradingBot:
         self.last_quote_change_by_id = {}
         self.latest_analysis_forecasts = {}
         self._entry_timing_cache = {}
+        self._readiness_cache = {}
         self.last_connectome_snapshot_at = {}
         self.last_connectome_remaining = {}
         self.stats = {
@@ -553,6 +555,27 @@ class TradingBot:
                     result = {"buckets": [], "settled_contracts": 0, "best_entry_bucket": None}
                 self._entry_timing_cache[graph_key] = {"at": timing_now, "data": result}
             entry_timing[graph_key] = self._entry_timing_cache[graph_key]["data"]
+        graph_items = (
+            ("decision", self.decision_connectome),
+            ("research", self.research_connectome),
+            ("analysis", self.analysis_connectome),
+        )
+        training_statuses = {
+            key: walk_forward_status(graph) for key, graph in graph_items
+        }
+        readiness = {}
+        readiness_now = time.time()
+        for graph_key, graph in graph_items:
+            cached = self._readiness_cache.get(graph_key)
+            if cached is None or readiness_now - cached["at"] >= 300.0:
+                try:
+                    report = build_readiness_report(graph, training_statuses[graph_key])
+                except Exception as exc:
+                    logger.exception("CONNECTOME_READINESS_REPORT_FAILED graph=%s", graph_key)
+                    report = {"graph_name": graph_key, "overall_status": "REPORT_FAILED",
+                              "live_trading_enabled": False, "error": str(exc)}
+                self._readiness_cache[graph_key] = {"at": readiness_now, "data": report}
+            readiness[graph_key] = self._readiness_cache[graph_key]["data"]
         return {
             "uptime_hours": (time.time() - self.stats["start_time"]) / 3600,
             "mode": "paper",
@@ -582,9 +605,9 @@ class TradingBot:
             "latest_analysis_forecasts": self.latest_analysis_forecasts,
             "price_spreads": self.market_monitor.get_price_spread(),
             "connectomes": {
-                "decision": {**self.decision_connectome.stats(), "training": walk_forward_status(self.decision_connectome), "entry_timing": entry_timing["decision"]},
-                "research": {**self.research_connectome.stats(), "training": walk_forward_status(self.research_connectome), "entry_timing": entry_timing["research"]},
-                "analysis": {**self.analysis_connectome.stats(), "training": walk_forward_status(self.analysis_connectome), "entry_timing": entry_timing["analysis"]},
+                "decision": {**self.decision_connectome.stats(), "training": training_statuses["decision"], "entry_timing": entry_timing["decision"], "readiness": readiness["decision"]},
+                "research": {**self.research_connectome.stats(), "training": training_statuses["research"], "entry_timing": entry_timing["research"], "readiness": readiness["research"]},
+                "analysis": {**self.analysis_connectome.stats(), "training": training_statuses["analysis"], "entry_timing": entry_timing["analysis"], "readiness": readiness["analysis"]},
             },
             "recent_opportunities": len(self.opportunity_detector.get_recent_opportunities(60)),
         }
