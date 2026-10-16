@@ -17,7 +17,7 @@ TARGETS = [
 ]
 
 
-def summarize(graph, min_samples=5):
+def summarize(graph, min_samples=30):
     """Compare fixed time-to-close entries and one-minute continuous buckets."""
     with graph._connect() as con:
         rows = con.execute(
@@ -113,5 +113,5 @@ def summarize(graph, min_samples=5):
         "buckets": output,
         "best_entry_bucket": best["bucket"] if best else None,
         "best_entry_return_per_dollar": best["mean_return_per_dollar"] if best else None,
-        "note": "Estimated spread-aware binary settlement returns from observed quotes; excludes fees, slippage and fill uncertainty. Use chronological holdout before selecting a live strategy.",
+        "note": "Estimated spread-aware binary settlement returns from observed quotes; excludes fees, slippage and fill uncertainty. Require at least 30 settled contracts per bucket before treating a ranking as eligible; these remain exploratory quote-based estimates, not verified fills, and exclude fees, slippage and latency.",
     }
