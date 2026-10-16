@@ -69,7 +69,7 @@ h1{font-size:clamp(1.5rem,4vw,2.2rem);line-height:1.15;margin:0 0 8px;letter-spa
   <article class="card"><div class="metric-label">Model / market Brier</div><div class="metric" id="bioBrier">—</div><div class="metric-sub" id="bioExpansion">Last graph expansion: —</div></article>
  </div>
  <p class="small" id="bioMessage">Loading persisted agent telemetry…</p>
- <div class="table-wrap"><table><thead><tr><th>Captured</th><th>Checkpoint</th><th>Contract</th><th>Forecast</th><th>Up probability</th><th>Market midpoint</th><th>Outcome</th><th>Brier</th><th>Learned</th></tr></thead><tbody id="bioRows"><tr><td colspan="9" class="empty">Waiting for reservoir telemetry</td></tr></tbody></table></div>
+ <div class="table-wrap"><table><thead><tr><th>Captured</th><th>Checkpoint</th><th>Contract</th><th>Forecast</th><th>Up probability</th><th>Market midpoint</th><th>Outcome</th><th>Brier</th><th>Learned</th></tr></thead><tbody id="bioRows"><tr><td colspan="9" class="empty">Connecting to reservoir telemetry…</td></tr></tbody></table></div>
 </div></section>
 
 <section class="section">
@@ -359,7 +359,7 @@ async function refreshBiologicalReservoir(){
   const d=await r.json();
   if(!r.ok)throw new Error(d.message||("HTTP "+r.status));
   const m=d.model||{},o=d.observations||{};
-  bioText("bioStatus",d.status||"WAITING");if(badge)badge.className="badge "+(d.status==="RECORDING"?"good":d.status==="STALE"||d.status==="ERROR"?"bad":"warn");
+  bioText("bioStatus",d.status||"INITIALIZING");if(badge)badge.className="badge "+(["WORKING","RECENT ACTIVITY","RECORDING"].includes(d.status)?"good":["STALE","ERROR","NOT CONNECTED"].includes(d.status)?"bad":"warn");
   bioText("bioNodes",m.node_count??0);bioText("bioEdges",m.edge_count??0);bioText("bioSnapshot","Latest snapshot: "+(o.latest_snapshot_id??m.last_snapshot_id??"—"));
   bioText("bioGraph",(m.model_version==null?"—":"v"+m.model_version)+" · "+(m.graph_snapshot||"graph pending"));
   bioText("bioObservations",o.total??0);bioText("bioLearning",o.learning_updates??m.learning_updates??0);
@@ -430,7 +430,7 @@ def biological_reservoir_status():
         with psycopg.connect(url, connect_timeout=4, row_factory=dict_row) as conn:
             ready = conn.execute("SELECT to_regclass('public.biological_reservoir_model_state') AS model_table, to_regclass('public.biological_reservoir_observations') AS obs_table").fetchone()
             if not ready["model_table"] or not ready["obs_table"]:
-                return jsonify({"ok": True, "status": "WAITING FOR WORKER", "message": "Reservoir tables are not initialized in the configured database yet.", "model": None, "observations": {}, "recent": []})
+                return jsonify({"ok": True, "status": "INITIALIZING", "message": "Dashboard is connected; telemetry tables are not initialized yet. Status will update when the worker creates them.", "model": None, "observations": {}, "recent": []})
             model = conn.execute("""SELECT model_version, graph_snapshot, graph_hash,
                 jsonb_array_length(node_ids) AS node_count, edge_count, learning_updates,
                 last_snapshot_id, last_expansion_at, updated_at
@@ -452,9 +452,9 @@ def biological_reservoir_status():
                 learning_update_applied FROM biological_reservoir_observations
                 ORDER BY captured_at DESC, snapshot_id DESC LIMIT 30""").fetchall()
         settled = int(stats["settled"] or 0)
-        latest = stats["latest_at"] or model["updated_at"]
+        latest = model["updated_at"] or stats["latest_at"]
         age = max(0, (datetime.now().astimezone() - latest.astimezone()).total_seconds()) if latest else None
-        status = "RECORDING" if age is not None and age <= 180 else "STALE" if age is not None else "INITIALIZING"
+        status = "WORKING" if age is not None and age <= 30 else "RECENT ACTIVITY" if age is not None and age <= 180 else "STALE" if age is not None else "INITIALIZING"
         return jsonify({"ok": True, "status": status, "research_only": True, "live_trading_enabled": False,
             "model": model, "observations": {"total": int(stats["total"] or 0),
             "latest_at": stats["latest_at"], "latest_snapshot_id": stats["latest_snapshot_id"],
