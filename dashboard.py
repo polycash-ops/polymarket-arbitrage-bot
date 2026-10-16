@@ -90,6 +90,11 @@ h1{font-size:clamp(1.5rem,4vw,2.2rem);line-height:1.15;margin:0 0 8px;letter-spa
  <p class="small">Each graph supports up to 1,000,000 nodes and 1,000,000 edges. Every valid quote refresh is recorded by all three Connectomes; node visits and graph connections update on that snapshot. Forecast accuracy and edge-weight training change only after the exact contract has an authoritative verified settlement. Pending snapshots are never counted as wins. The ≥98% figure is a target to evaluate, not a guaranteed result.</p>
 </section>
 <section class="section panel"><div class="panel-inner">
+ <div class="section-head"><h2>Walk-forward training evidence</h2><span class="small" id="trainingSummary">Waiting for persisted training runs…</span></div>
+ <p class="small">Each run uses chronologically ordered, officially settled observations. Validation predictions can only use labels whose settlement timestamp precedes the validation snapshot. A candidate is marked accepted only when its validation Brier score beats the market-midpoint baseline; accepted status is evaluation evidence, not a promise of future profitability.</p>
+ <div class="table-wrap"><table><thead><tr><th>Graph</th><th>Saved runs</th><th>Latest run (UTC)</th><th>Validation samples</th><th>Market baseline Brier</th><th>Candidate Brier</th><th>Changed edges</th><th>Result</th></tr></thead><tbody id="trainingRows"><tr><td colspan="8" class="empty">Waiting for persisted training runs</td></tr></tbody></table></div>
+</div></section>
+<section class="section panel"><div class="panel-inner">
  <div class="section-head"><h2>Overlapping Trend Analysis Connectome</h2><span class="small">Independent graph · 1,000,000-node capacity · 5-second snapshot cadence</span></div>
  <div class="grid-two">
   <div><div class="metric-label">Analysis graph nodes / capacity</div><div class="metric" id="analysisNodes">—</div><div class="metric-label">Edges / 1M capacity</div><div id="analysisEdges" style="font-weight:700">—</div><div class="metric-label">Nodes touched in last 15 minutes</div><div id="analysisRecentNodes" style="font-weight:700">—</div><div class="metric-label">Edges touched in last 15 minutes</div><div id="analysisRecentEdges" style="font-weight:700">—</div><div class="metric-label">New nodes / new edges in last 15 minutes</div><div id="analysisNewGraph" style="font-weight:700">—</div></div>
@@ -158,6 +163,26 @@ function paintConnectomes(graphs){
  paintCheckpointTable("decisionCheckpoints",d);paintCheckpointTable("researchCheckpoints",r);
  put("decisionBestCheckpoint",d.recommended_checkpoint||"Awaiting settled snapshots");
  put("researchBestCheckpoint",r.recommended_checkpoint||"Awaiting settled snapshots");
+ const trainingBody=el("trainingRows");
+ if(trainingBody){
+  trainingBody.replaceChildren();
+  const names=[["decision","Decision"],["research","Research"],["analysis","Analysis"]];
+  let runs=0;
+  names.forEach(([key,label])=>{
+   const g=graphs&&graphs[key]||{},t=g.training||{},v=t.latest||{};
+   runs+=num(t.run_count)||0;
+   const tr=document.createElement("tr");
+   const values=[label,fmt(t.run_count||0),v.started_at?new Date(v.started_at).toLocaleString("en-US",{timeZone:"UTC"}):"No run",
+    fmt(v.details&&v.details.validation_samples||0),
+    num(v.baseline_brier)===null?"—":Number(v.baseline_brier).toFixed(4),
+    num(v.candidate_brier)===null?"—":Number(v.candidate_brier).toFixed(4),
+    fmt(v.changed_edges||0),
+    v.accepted===true?"ACCEPTED":v.accepted===false?"REJECTED":"Awaiting run"];
+   values.forEach((value,index)=>{const td=document.createElement("td");td.textContent=String(value);if(index===0||index===7)td.style.fontWeight="700";tr.appendChild(td)});
+   trainingBody.appendChild(tr);
+  });
+  put("trainingSummary",runs+" saved walk-forward runs across three graphs");
+ }
  put("connectomeSummary","Checkpoint exploration shows recorded, pending, and settled snapshots separately. Accuracy uses settled snapshots only; internal reference trades are not shown");
 }
 function tradeTimestamp(t){
