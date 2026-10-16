@@ -96,7 +96,7 @@ h1{font-size:clamp(1.5rem,4vw,2.2rem);line-height:1.15;margin:0 0 8px;letter-spa
   <article class="card"><div class="metric-label">Mean Brier score</div><div class="metric" id="verifiedBrier">—</div></article>
   <article class="card"><div class="metric-label">Last verified</div><div class="metric" id="verifiedLast">—</div></article>
  </div>
- <div class="table-wrap"><table><thead><tr><th>Contract</th><th>Timeframe</th><th>Checkpoint</th><th>Forecast</th><th>UP probability</th><th>Verified outcome</th><th>Correct</th><th>Brier</th><th>Learning update</th><th>Settlement source</th><th>Verified at</th></tr></thead><tbody id="verifiedRows"><tr><td colspan="11" class="empty">Loading verified contracts…</td></tr></tbody></table></div>
+ <div class="table-wrap"><table><thead><tr><th>Contract</th><th>Timeframe</th><th>Checkpoint</th><th>Forecast</th><th>UP probability</th><th>Verified outcome</th><th>Correct</th><th>Brier</th><th>Learning update</th><th>Update applied at</th><th>Model version</th><th>Settlement source</th><th>Verified at</th></tr></thead><tbody id="verifiedRows"><tr><td colspan="13" class="empty">Loading verified contracts…</td></tr></tbody></table></div>
 </div></section>
 <p class="foot">This dashboard reads only the Biological Reservoir research tables. It does not start or control the Polymarket arbitrage bot. All activity is research-only; live trading is hard-blocked.</p>
 </main>
@@ -157,8 +157,8 @@ async function refreshVerifiedContracts(){
   const r=await fetch("/api/verified-contracts?ts="+Date.now(),{cache:"no-store"});const d=await r.json();if(!r.ok)throw new Error(d.message||("HTTP "+r.status));
   const m=d.metrics||{};put("verifiedCount",m.verified??0);put("verifiedCorrect",m.correct==null?"—":m.correct+" / "+(m.verified??0));put("verifiedAccuracy",m.accuracy_pct==null?"—":Number(m.accuracy_pct).toFixed(1)+"%");put("verifiedBrier",m.mean_brier==null?"—":Number(m.mean_brier).toFixed(5));put("verifiedLast",fmtTime(m.last_verified_at));
   const body=el("verifiedRows");body.replaceChildren();const rows=Array.isArray(d.contracts)?d.contracts:[];
-  if(!rows.length){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=11;td.className="empty";td.textContent="No explicitly verified reservoir outcomes yet. Pending contracts are intentionally excluded.";tr.appendChild(td);body.appendChild(tr)}
-  rows.forEach(x=>{const tr=document.createElement("tr");const vals=[x.market_slug||"—",x.timeframe||"—",x.checkpoint||"—",x.forecast_direction||"—",x.probability_up==null?"—":(100*Number(x.probability_up)).toFixed(1)+"%",x.outcome||"—",x.correct==null?"—":(x.correct?"YES":"NO"),x.brier_score==null?"—":Number(x.brier_score).toFixed(5),x.learning_update_applied?"YES":"NO",x.settlement_source||"Explicit settlement recorded",fmtTime(x.verified_at)];vals.forEach(v=>{const td=document.createElement("td");td.textContent=String(v);tr.appendChild(td)});body.appendChild(tr)});
+  if(!rows.length){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=13;td.className="empty";td.textContent="No explicitly verified reservoir outcomes yet. Pending contracts are intentionally excluded.";tr.appendChild(td);body.appendChild(tr)}
+  rows.forEach(x=>{const tr=document.createElement("tr");const vals=[x.market_slug||"—",x.timeframe||"—",x.checkpoint||"—",x.forecast_direction||"—",x.probability_up==null?"—":(100*Number(x.probability_up)).toFixed(1)+"%",x.outcome||"—",x.correct==null?"—":(x.correct?"YES":"NO"),x.brier_score==null?"—":Number(x.brier_score).toFixed(5),x.learning_update_applied?"APPLIED":"NOT APPLIED",fmtTime(x.learning_applied_at),x.model_version==null?"—":"v"+x.model_version,x.settlement_source||"Explicit settlement recorded",fmtTime(x.verified_at)];vals.forEach(v=>{const td=document.createElement("td");td.textContent=String(v);tr.appendChild(td)});body.appendChild(tr)});
   put("verifiedRefresh","Updated "+new Date().toLocaleTimeString("en-US",{timeZone:"America/New_York"})+" ET");
  }catch(e){put("verifiedRefresh","Could not load verified outcomes: "+String(e.message||e))}
 }
@@ -246,6 +246,8 @@ def verified_contracts():
             rows = conn.execute("""
                 SELECT o.market_slug, o.captured_at, o.checkpoint, o.forecast_direction,
                        o.probability_up, o.outcome, o.brier_score, o.learning_update_applied,
+                       o.details->'learning_update'->>'learning_applied_at' AS learning_applied_at,
+                       NULLIF(o.details->>'reservoir_model_version', '')::integer AS model_version,
                        o.details->>'settlement_source' AS settlement_source,
                        NULLIF(o.details->>'settled_at','')::timestamptz AS verified_at,
                        o.details->>'contract_timeframe' AS timeframe,
