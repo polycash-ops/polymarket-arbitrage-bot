@@ -98,7 +98,8 @@ def persist_with_graph(graph, entry_timing_by_graph, readiness_by_graph=None):
             candidates.append(candidate)
         # Register concrete multi-signal arrangements as independent candidates.
         # The combo key hashes to a stable ID; rank changes never change identity.
-        for combo in timing.get("combo_candidates", []):
+        combo_rows = list(timing.get("combo_candidates", [])) + list(timing.get("checkpoint_combo_candidates", []))
+        for combo in combo_rows:
             combo_key = str(combo.get("combo_key") or "")
             if not combo_key:
                 continue
