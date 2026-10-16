@@ -147,6 +147,8 @@ def persist_with_graph(graph, entry_timing_by_graph, readiness_by_graph=None):
             }
             candidates.append(candidate)
     candidates.sort(key=lambda x: (
+        1 if x["strategy_type"] == "checkpoint_signal_combination" else 0,
+        1 if str(x["metrics"].get("metric_source", "")).startswith("cross_checkpoint") else 0,
         1 if x["metrics"]["ranking_eligible"] else 0,
         x["ranking_score"],
         float(x["metrics"]["accuracy"] or 0.0),
@@ -234,7 +236,7 @@ def persist_with_graph(graph, entry_timing_by_graph, readiness_by_graph=None):
     return {
         "updated_at": now.isoformat(), "candidate_count": len(candidates),
         "top_five": top_five,
-        "ranking_method": "sample-gated estimated return, then accuracy and Brier tie-breakers",
+        "ranking_method": "cross-checkpoint combo candidates first, then sample-gated estimated return, accuracy and Brier tie-breakers",
         "ranking_minimum_contracts": MIN_CONTRACTS_FOR_RANKING,
         "profile_persistence": "SAVED" if saved else "SAVE_FAILED",
         "live_trading_enabled": False,
