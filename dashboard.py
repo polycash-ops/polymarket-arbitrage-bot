@@ -57,6 +57,21 @@ h1{font-size:clamp(1.5rem,4vw,2.2rem);line-height:1.15;margin:0 0 8px;letter-spa
 <body><main>
 <header><div><h1>BTC Polymarket Connectome Trend Research</h1><p class="subtitle">Three independent Connectomes · 5-second quote snapshots · 15m and hourly directional forecasting · trade execution disabled</p></div><span class="pill"><span class="dot"></span> FORECAST-ONLY MODE</span></header>
 <div id="error" role="alert"></div>
+
+<section class="section panel" id="biologicalReservoirPanel"><div class="panel-inner">
+ <div class="section-head"><h2>Biological Reservoir · independent research agent</h2><span id="bioStatus" class="badge warn">CHECKING</span></div>
+ <p class="small">Separate BTC-history reservoir research worker · paper forecasting only · live trading hard-blocked</p>
+ <div class="cards" style="margin-top:12px">
+  <article class="card"><div class="metric-label">Graph nodes</div><div class="metric" id="bioNodes">—</div><div class="metric-sub" id="bioGraph">Graph pending</div></article>
+  <article class="card"><div class="metric-label">Graph edges</div><div class="metric" id="bioEdges">—</div><div class="metric-sub" id="bioSnapshot">Latest snapshot: —</div></article>
+  <article class="card"><div class="metric-label">Recorded observations</div><div class="metric" id="bioObservations">—</div><div class="metric-sub" id="bioUpdated">Latest: —</div></article>
+  <article class="card"><div class="metric-label">Learning updates</div><div class="metric" id="bioLearning">—</div><div class="metric-sub" id="bioAccuracy">Resolved accuracy: —</div></article>
+  <article class="card"><div class="metric-label">Model / market Brier</div><div class="metric" id="bioBrier">—</div><div class="metric-sub" id="bioExpansion">Last graph expansion: —</div></article>
+ </div>
+ <p class="small" id="bioMessage">Loading persisted agent telemetry…</p>
+ <div class="table-wrap"><table><thead><tr><th>Captured</th><th>Checkpoint</th><th>Contract</th><th>Forecast</th><th>Up probability</th><th>Market midpoint</th><th>Outcome</th><th>Brier</th><th>Learned</th></tr></thead><tbody id="bioRows"><tr><td colspan="9" class="empty">Waiting for reservoir telemetry</td></tr></tbody></table></div>
+</div></section>
+
 <section class="section">
  <div class="section-head"><h2>Performance overview</h2><span class="updated" id="updated">Waiting for status…</span></div>
  <div class="cards">
@@ -334,6 +349,32 @@ function drawProfitCurve(points){
  const last=points[points.length-1];put("curveSummary",Math.max(0,points.length-1)+" settled trades · latest balance "+money(last.balance)+" · realized P/L "+money(last.profit));
  ctx.fillStyle="#9aabc0";ctx.fillText(points[0].label||"Start",pad.l,height-7);const endLabel=points[points.length-1].label||"Latest";ctx.fillText(endLabel,Math.max(pad.l,width-pad.r-ctx.measureText(endLabel).width),height-7);
 }
+
+function bioText(id,value){const n=document.getElementById(id);if(n)n.textContent=value}
+function bioTime(v){if(!v)return "—";const d=new Date(v);return isNaN(d)?String(v):d.toLocaleString()}
+async function refreshBiologicalReservoir(){
+ const badge=document.getElementById("bioStatus");
+ try{
+  const r=await fetch("/api/biological-reservoir?ts="+Date.now(),{cache:"no-store"});
+  const d=await r.json();
+  if(!r.ok)throw new Error(d.message||("HTTP "+r.status));
+  const m=d.model||{},o=d.observations||{};
+  bioText("bioStatus",d.status||"WAITING");if(badge)badge.className="badge "+(d.status==="RECORDING"?"good":d.status==="STALE"||d.status==="ERROR"?"bad":"warn");
+  bioText("bioNodes",m.node_count??0);bioText("bioEdges",m.edge_count??0);bioText("bioSnapshot","Latest snapshot: "+(o.latest_snapshot_id??m.last_snapshot_id??"—"));
+  bioText("bioGraph",(m.model_version==null?"—":"v"+m.model_version)+" · "+(m.graph_snapshot||"graph pending"));
+  bioText("bioObservations",o.total??0);bioText("bioLearning",o.learning_updates??m.learning_updates??0);
+  bioText("bioUpdated","Latest: "+bioTime(o.latest_at||m.updated_at));
+  bioText("bioAccuracy","Resolved accuracy: "+(o.accuracy_pct==null?"—":Number(o.accuracy_pct).toFixed(2)+"%")+" · "+(o.settled??0)+" resolved");
+  bioText("bioBrier",(o.brier_score==null?"—":Number(o.brier_score).toFixed(5))+" / "+(o.market_brier_score==null?"—":Number(o.market_brier_score).toFixed(5)));
+  bioText("bioExpansion","Last graph expansion: "+bioTime(m.last_expansion_at));
+  bioText("bioMessage",d.message||"Telemetry loaded from persistent reservoir tables.");
+  const body=document.getElementById("bioRows");body.replaceChildren();
+  const recent=Array.isArray(d.recent)?d.recent:[];
+  if(!recent.length){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=9;td.className="empty";td.textContent="No reservoir observations recorded yet";tr.appendChild(td);body.appendChild(tr)}
+  recent.forEach(x=>{const tr=document.createElement("tr");const vals=[bioTime(x.captured_at),x.checkpoint||"continuous",x.market_slug||"—",x.forecast_direction||"—",x.probability_up==null?"—":(100*Number(x.probability_up)).toFixed(1)+"%",x.market_midpoint==null?"—":Number(x.market_midpoint).toFixed(4),x.outcome||"PENDING",x.brier_score==null?"—":Number(x.brier_score).toFixed(5),x.learning_update_applied?"YES":"—"];vals.forEach(v=>{const td=document.createElement("td");td.textContent=String(v);tr.appendChild(td)});body.appendChild(tr)});
+ }catch(e){if(badge){badge.textContent="NOT CONNECTED";badge.className="badge bad"}bioText("bioMessage","Reservoir telemetry unavailable: "+String(e.message||e)+". Configure CONNECTOME_DATABASE_URL on this dashboard service to the same paid Postgres used by the reservoir worker.");}
+}
+
 function paintPolymarketQuotes(quotes,forecasts){
  const body=el("polymarketQuoteRows");if(!body)return;body.replaceChildren();
  const horizons=[["15m","polymarket"],["1h","polymarket_1h"]];
@@ -372,8 +413,59 @@ async function refresh(){
  }catch(e){el("error").textContent="Unable to refresh dashboard data: "+String(e);el("error").style.display="block";put("updated","Refresh failed")}
 }
 window.addEventListener("resize",()=>{if(window._lastEquityCurve)drawProfitCurve(window._lastEquityCurve)});
-refresh();setInterval(refresh,5000);
+refresh();refreshBiologicalReservoir();setInterval(refresh,5000);setInterval(refreshBiologicalReservoir,10000);
 </script></body></html>"""
+
+
+
+@app.get("/api/biological-reservoir")
+def biological_reservoir_status():
+    """Read persisted status for the separate Biological Reservoir research worker."""
+    url = os.getenv("CONNECTOME_DATABASE_URL")
+    if not url:
+        return jsonify({"ok": False, "status": "NOT CONFIGURED", "message": "CONNECTOME_DATABASE_URL is not set on this dashboard service.", "model": None, "observations": {}, "recent": []}), 503
+    try:
+        import psycopg
+        from psycopg.rows import dict_row
+        with psycopg.connect(url, connect_timeout=4, row_factory=dict_row) as conn:
+            ready = conn.execute("SELECT to_regclass('public.biological_reservoir_model_state') AS model_table, to_regclass('public.biological_reservoir_observations') AS obs_table").fetchone()
+            if not ready["model_table"] or not ready["obs_table"]:
+                return jsonify({"ok": True, "status": "WAITING FOR WORKER", "message": "Reservoir tables are not initialized in the configured database yet.", "model": None, "observations": {}, "recent": []})
+            model = conn.execute("""SELECT model_version, graph_snapshot, graph_hash,
+                jsonb_array_length(node_ids) AS node_count, edge_count, learning_updates,
+                last_snapshot_id, last_expansion_at, updated_at
+                FROM biological_reservoir_model_state WHERE id=1""").fetchone()
+            if not model:
+                return jsonify({"ok": True, "status": "INITIALIZING", "message": "Reservoir model state row has not been created yet.", "model": None, "observations": {}, "recent": []})
+            stats = conn.execute("""SELECT count(*) AS total, max(captured_at) AS latest_at,
+                max(snapshot_id) AS latest_snapshot_id,
+                count(*) FILTER (WHERE outcome IS NOT NULL) AS settled,
+                count(*) FILTER (WHERE outcome IS NOT NULL AND upper(forecast_direction)=upper(outcome)) AS correct,
+                avg(brier_score) FILTER (WHERE brier_score IS NOT NULL) AS brier_score,
+                count(*) FILTER (WHERE learning_update_applied) AS learning_updates
+                FROM biological_reservoir_observations""").fetchone()
+            market = conn.execute("""SELECT avg(power(market_midpoint -
+                CASE WHEN upper(outcome)='UP' THEN 1.0 ELSE 0.0 END, 2)) AS score
+                FROM biological_reservoir_observations WHERE outcome IS NOT NULL""").fetchone()
+            recent = conn.execute("""SELECT snapshot_id, market_slug, captured_at, checkpoint,
+                forecast_direction, probability_up, market_midpoint, outcome, brier_score,
+                learning_update_applied FROM biological_reservoir_observations
+                ORDER BY captured_at DESC, snapshot_id DESC LIMIT 30""").fetchall()
+        settled = int(stats["settled"] or 0)
+        latest = stats["latest_at"] or model["updated_at"]
+        age = max(0, (datetime.now().astimezone() - latest.astimezone()).total_seconds()) if latest else None
+        status = "RECORDING" if age is not None and age <= 180 else "STALE" if age is not None else "INITIALIZING"
+        return jsonify({"ok": True, "status": status, "research_only": True, "live_trading_enabled": False,
+            "model": model, "observations": {"total": int(stats["total"] or 0),
+            "latest_at": stats["latest_at"], "latest_snapshot_id": stats["latest_snapshot_id"],
+            "settled": settled, "accuracy_pct": round(100 * int(stats["correct"] or 0) / settled, 2) if settled else None,
+            "brier_score": round(float(stats["brier_score"]), 5) if stats["brier_score"] is not None else None,
+            "market_brier_score": round(float(market["score"]), 5) if market["score"] is not None else None,
+            "learning_updates": int(stats["learning_updates"] or 0)}, "recent": recent,
+            "message": "Research/paper forecasts only. Accuracy counts only resolved outcomes; learning counts persisted updates."})
+    except Exception as exc:
+        logging.exception("Biological Reservoir telemetry endpoint failed")
+        return jsonify({"ok": False, "status": "ERROR", "message": type(exc).__name__ + ": " + str(exc), "model": None, "observations": {}, "recent": []}), 500
 
 
 @app.get("/health")
