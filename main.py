@@ -16,6 +16,7 @@ from bot.market_monitor import MarketMonitor
 from bot.opportunity_detector import Opportunity, OpportunityDetector
 from bot.trade_executor import Trade, TradeExecutor
 from bot.walk_forward import run_if_due as run_walk_forward_if_due, status as walk_forward_status
+from bot.entry_timing import summarize as summarize_entry_timing
 
 Path("logs").mkdir(parents=True, exist_ok=True)
 logging.basicConfig(
@@ -563,9 +564,9 @@ class TradingBot:
             "latest_analysis_forecasts": self.latest_analysis_forecasts,
             "price_spreads": self.market_monitor.get_price_spread(),
             "connectomes": {
-                "decision": {**self.decision_connectome.stats(), "training": walk_forward_status(self.decision_connectome)},
-                "research": {**self.research_connectome.stats(), "training": walk_forward_status(self.research_connectome)},
-                "analysis": {**self.analysis_connectome.stats(), "training": walk_forward_status(self.analysis_connectome)},
+                "decision": {**self.decision_connectome.stats(), "training": walk_forward_status(self.decision_connectome), "entry_timing": summarize_entry_timing(self.decision_connectome)},
+                "research": {**self.research_connectome.stats(), "training": walk_forward_status(self.research_connectome), "entry_timing": summarize_entry_timing(self.research_connectome)},
+                "analysis": {**self.analysis_connectome.stats(), "training": walk_forward_status(self.analysis_connectome), "entry_timing": summarize_entry_timing(self.analysis_connectome)},
             },
             "recent_opportunities": len(self.opportunity_detector.get_recent_opportunities(60)),
         }
