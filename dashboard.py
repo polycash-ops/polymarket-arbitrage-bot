@@ -85,7 +85,7 @@ h1{font-size:clamp(1.5rem,4vw,2.2rem);line-height:1.15;margin:0 0 8px;letter-spa
 </div></section>
 <section class="section panel"><div class="panel-inner">
  <div class="section-head"><h2>Recent reservoir observations</h2><span class="small" id="refreshTime">Waiting for first refresh</span></div>
- <div class="table-wrap"><table><thead><tr><th>Captured</th><th>Checkpoint</th><th>Contract</th><th>Forecast</th><th>Up probability</th><th>Market midpoint</th><th>Outcome</th><th>Brier</th><th>Learned</th></tr></thead><tbody id="bioRows"><tr><td colspan="9" class="empty">Connecting to reservoir telemetry…</td></tr></tbody></table></div>
+ <div class="table-wrap"><table><thead><tr><th>Captured</th><th>Timeframe</th><th>Checkpoint</th><th>Contract</th><th>Forecast</th><th>Up probability</th><th>Market midpoint</th><th>Outcome</th><th>Brier</th><th>Learned</th></tr></thead><tbody id="bioRows"><tr><td colspan="9" class="empty">Connecting to reservoir telemetry…</td></tr></tbody></table></div>
 </div></section>
 <p class="foot">This dashboard reads only the Biological Reservoir research tables. It does not start or control the Polymarket arbitrage bot. All activity is research-only; live trading is hard-blocked.</p>
 </main>
@@ -113,8 +113,8 @@ async function refreshReservoir(){
   put("bioExpansion","Last graph expansion: "+fmtTime(m.last_expansion_at));
   put("bioMessage",d.message||"Telemetry loaded from persistent reservoir tables.");
   const body=el("bioRows");body.replaceChildren();const rows=Array.isArray(d.recent)?d.recent:[];
-  if(!rows.length){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=9;td.className="empty";td.textContent="No reservoir observations recorded yet";tr.appendChild(td);body.appendChild(tr)}
-  rows.forEach(x=>{const tr=document.createElement("tr");const vals=[fmtTime(x.captured_at),x.checkpoint||"continuous",x.market_slug||"—",x.forecast_direction||"—",x.probability_up==null?"—":(100*Number(x.probability_up)).toFixed(1)+"%",x.market_midpoint==null?"—":Number(x.market_midpoint).toFixed(4),x.outcome||"PENDING",x.brier_score==null?"—":Number(x.brier_score).toFixed(5),x.learning_update_applied?"YES":"—"];vals.forEach(v=>{const td=document.createElement("td");td.textContent=String(v);tr.appendChild(td)});body.appendChild(tr)});
+  if(!rows.length){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=10;td.className="empty";td.textContent="No reservoir observations recorded yet";tr.appendChild(td);body.appendChild(tr)}
+  rows.forEach(x=>{const tr=document.createElement("tr");const vals=[fmtTime(x.captured_at),x.timeframe||"—",x.checkpoint||"continuous",x.market_slug||"—",x.forecast_direction||"—",x.probability_up==null?"—":(100*Number(x.probability_up)).toFixed(1)+"%",x.market_midpoint==null?"—":Number(x.market_midpoint).toFixed(4),x.outcome||"PENDING",x.brier_score==null?"—":Number(x.brier_score).toFixed(5),x.learning_update_applied?"YES":"—"];vals.forEach(v=>{const td=document.createElement("td");td.textContent=String(v);tr.appendChild(td)});body.appendChild(tr)});
   put("refreshTime","Last refreshed "+new Date().toLocaleTimeString("en-US",{timeZone:"America/New_York"})+" ET");
  }catch(e){
   if(badge){badge.textContent="NOT CONNECTED";badge.className="badge bad"}
@@ -174,7 +174,7 @@ def biological_reservoir_status():
             market = conn.execute("""SELECT avg(power(market_midpoint -
                 CASE WHEN upper(outcome)='UP' THEN 1.0 ELSE 0.0 END, 2)) AS score
                 FROM biological_reservoir_observations WHERE outcome IS NOT NULL""").fetchone()
-            recent = conn.execute("""SELECT snapshot_id, market_slug, captured_at, checkpoint,
+            recent = conn.execute("""SELECT snapshot_id, market_slug, captured_at, details->>'contract_timeframe' AS timeframe, checkpoint,
                 forecast_direction, probability_up, market_midpoint, outcome, brier_score,
                 learning_update_applied FROM biological_reservoir_observations
                 ORDER BY captured_at DESC, snapshot_id DESC LIMIT 30""").fetchall()
