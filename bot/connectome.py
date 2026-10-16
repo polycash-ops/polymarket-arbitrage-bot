@@ -15,6 +15,12 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Optional
 
 logger = logging.getLogger(__name__)
+
+
+def _pg_executemany(connection, query, params):
+    """Run a batch with psycopg 3's cursor API (Connection has no executemany)."""
+    with connection.cursor() as cursor:
+        cursor.executemany(query, params)
 MAX_NODES_DEFAULT = 1_000_000
 MAX_EDGES_DEFAULT = 1_000_000
 
@@ -248,7 +254,7 @@ class Connectome:
                 "SELECT event_id,market_id,observed_at,features_json,outcome,actual_up,settled_at FROM observations"
             ).fetchall()]
         with self._pg_connect() as pg:
-            pg.executemany(
+            _pg_executemany(pg, 
                 "INSERT INTO connectome_nodes(graph_name,node_id,kind,signature,visits,wins,losses,up_count,down_count,created_at,updated_at) "
                 "VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(graph_name,node_id) DO UPDATE SET "
                 "kind=EXCLUDED.kind,signature=EXCLUDED.signature,visits=EXCLUDED.visits,wins=EXCLUDED.wins,"
@@ -256,7 +262,7 @@ class Connectome:
                 "created_at=EXCLUDED.created_at,updated_at=EXCLUDED.updated_at",
                 [(self.name, *row) for row in nodes]
             )
-            pg.executemany(
+            _pg_executemany(pg, 
                 "INSERT INTO connectome_edges(graph_name,edge_id,source_id,target_id,weight,updates,traversals,weight_updates,wins,losses,created_at,updated_at) "
                 "VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(graph_name,edge_id) DO UPDATE SET "
                 "source_id=EXCLUDED.source_id,target_id=EXCLUDED.target_id,weight=EXCLUDED.weight,updates=EXCLUDED.updates,"
@@ -264,7 +270,7 @@ class Connectome:
                 "losses=EXCLUDED.losses,created_at=EXCLUDED.created_at,updated_at=EXCLUDED.updated_at",
                 [(self.name, *row) for row in edges]
             )
-            pg.executemany(
+            _pg_executemany(pg, 
                 "INSERT INTO connectome_observations(graph_name,event_id,market_id,observed_at,features_json,outcome,actual_up,settled_at) "
                 "VALUES(%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(graph_name,event_id) DO UPDATE SET "
                 "market_id=EXCLUDED.market_id,observed_at=EXCLUDED.observed_at,features_json=EXCLUDED.features_json,"
@@ -296,7 +302,7 @@ class Connectome:
                 edge_ids
             ).fetchall()] if edge_ids else []
         with self._pg_connect() as pg:
-            pg.executemany(
+            _pg_executemany(pg, 
                 "INSERT INTO connectome_nodes(graph_name,node_id,kind,signature,visits,wins,losses,up_count,down_count,created_at,updated_at) "
                 "VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(graph_name,node_id) DO UPDATE SET "
                 "kind=EXCLUDED.kind,signature=EXCLUDED.signature,visits=EXCLUDED.visits,wins=EXCLUDED.wins,"
@@ -304,7 +310,7 @@ class Connectome:
                 "created_at=EXCLUDED.created_at,updated_at=EXCLUDED.updated_at",
                 [(self.name, *row) for row in nodes]
             )
-            pg.executemany(
+            _pg_executemany(pg, 
                 "INSERT INTO connectome_edges(graph_name,edge_id,source_id,target_id,weight,updates,traversals,weight_updates,wins,losses,created_at,updated_at) "
                 "VALUES(%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(graph_name,edge_id) DO UPDATE SET "
                 "source_id=EXCLUDED.source_id,target_id=EXCLUDED.target_id,weight=EXCLUDED.weight,updates=EXCLUDED.updates,"
@@ -312,7 +318,7 @@ class Connectome:
                 "losses=EXCLUDED.losses,created_at=EXCLUDED.created_at,updated_at=EXCLUDED.updated_at",
                 [(self.name, *row) for row in edges]
             )
-            pg.executemany(
+            _pg_executemany(pg, 
                 "INSERT INTO connectome_observations(graph_name,event_id,market_id,observed_at,features_json,outcome,actual_up,settled_at) "
                 "VALUES(%s,%s,%s,%s,%s,%s,%s,%s) ON CONFLICT(graph_name,event_id) DO UPDATE SET "
                 "market_id=EXCLUDED.market_id,observed_at=EXCLUDED.observed_at,features_json=EXCLUDED.features_json,"
