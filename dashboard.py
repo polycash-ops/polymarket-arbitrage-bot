@@ -95,6 +95,11 @@ h1{font-size:clamp(1.5rem,4vw,2.2rem);line-height:1.15;margin:0 0 8px;letter-spa
  <div class="table-wrap"><table><thead><tr><th>Graph</th><th>Saved runs</th><th>Latest run (UTC)</th><th>Validation samples</th><th>Market baseline Brier</th><th>Candidate Brier</th><th>Changed edges</th><th>Result</th></tr></thead><tbody id="trainingRows"><tr><td colspan="8" class="empty">Waiting for persisted training runs</td></tr></tbody></table></div>
 </div></section>
 <section class="section panel"><div class="panel-inner">
+ <div class="section-head"><h2>Entry timing experiment · contract-aligned</h2><span class="small" id="entryTimingSummary">Waiting for settled contracts…</span></div>
+ <p class="small">Each contract contributes at most one snapshot per timing bucket. Returns estimate buying UP at the observed ask or DOWN at 1 − UP bid, then settling to $1/$0. These are quote-based research estimates—not verified fills—and exclude fees, slippage and latency. “Best” is provisional until tested on a later chronological holdout.</p>
+ <div class="table-wrap"><table><thead><tr><th>Connectome</th><th>Entry timing</th><th>Contracts</th><th>Directional accuracy</th><th>Up-probability Brier</th><th>Priced entries</th><th>Mean return / $1</th><th>Profitable entries</th></tr></thead><tbody id="entryTimingRows"><tr><td colspan="8" class="empty">Waiting for settled contract snapshots</td></tr></tbody></table></div>
+</div></section>
+<section class="section panel"><div class="panel-inner">
  <div class="section-head"><h2>Overlapping Trend Analysis Connectome</h2><span class="small">Independent graph · 1,000,000-node capacity · 5-second snapshot cadence</span></div>
  <div class="grid-two">
   <div><div class="metric-label">Analysis graph nodes / capacity</div><div class="metric" id="analysisNodes">—</div><div class="metric-label">Edges / 1M capacity</div><div id="analysisEdges" style="font-weight:700">—</div><div class="metric-label">Nodes touched in last 15 minutes</div><div id="analysisRecentNodes" style="font-weight:700">—</div><div class="metric-label">Edges touched in last 15 minutes</div><div id="analysisRecentEdges" style="font-weight:700">—</div><div class="metric-label">New nodes / new edges in last 15 minutes</div><div id="analysisNewGraph" style="font-weight:700">—</div></div>
@@ -182,6 +187,31 @@ function paintConnectomes(graphs){
    trainingBody.appendChild(tr);
   });
   put("trainingSummary",runs+" saved walk-forward runs across three graphs");
+ }
+ const entryBody=el("entryTimingRows");
+ if(entryBody){
+  entryBody.replaceChildren();
+  const names=[["decision","Decision"],["research","Research"],["analysis","Analysis"]];
+  let rowCount=0,settledContracts=0;
+  names.forEach(([key,label])=>{
+   const timing=((graphs&&graphs[key]||{}).entry_timing)||{};
+   settledContracts=Math.max(settledContracts,num(timing.settled_contracts)||0);
+   const buckets=Array.isArray(timing.buckets)?timing.buckets:[];
+   buckets.forEach(v=>{
+    rowCount++;
+    const tr=document.createElement("tr");
+    const isBest=timing.best_entry_bucket===v.bucket&&v.eligible;
+    const ret=num(v.mean_return_per_dollar);
+    const vals=[label+(isBest?" · provisional best":""),v.bucket,fmt(v.contracts),pct(v.accuracy),
+      num(v.brier)===null?"—":Number(v.brier).toFixed(4),fmt(v.priced_entries),
+      ret===null?"—":(ret>=0?"+":"")+(ret*100).toFixed(2)+"%",
+      num(v.positive_return_rate)===null?"—":pct(v.positive_return_rate)];
+    vals.forEach((value,index)=>{const td=document.createElement("td");td.textContent=String(value);if(index===0)td.style.fontWeight="700";tr.appendChild(td)});
+    entryBody.appendChild(tr);
+   });
+  });
+  if(!rowCount){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=8;td.className="empty";td.textContent="No settled entry-timing samples yet.";tr.appendChild(td);entryBody.appendChild(tr)}
+  put("entryTimingSummary",settledContracts+" settled contracts per graph · timing rankings require at least 5 contracts per bucket");
  }
  put("connectomeSummary","Checkpoint exploration shows recorded, pending, and settled snapshots separately. Accuracy uses settled snapshots only; internal reference trades are not shown");
 }
