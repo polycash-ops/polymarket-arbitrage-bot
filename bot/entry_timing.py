@@ -180,9 +180,78 @@ def summarize(graph, min_samples=30):
         x["contracts"] >= min_samples, x["mean_return_per_dollar"] is not None,
         x["mean_return_per_dollar"] if x["mean_return_per_dollar"] is not None else -999,
         x["accuracy"], -x["brier"]), reverse=True)
+    # Cross-checkpoint arrangements test sequences of states rather than single indicators.
+    checkpoint_combo_groups = defaultdict(dict)
+    checkpoint_specs = [("10m", 600), ("5m", 300), ("3m", 180)]
+    for market_id, snapshots in contracts.items():
+        snapshots.sort(key=lambda x: x["observed_at"])
+        selected = {}
+        for label, target in checkpoint_specs:
+            eligible = [s for s in snapshots if abs(s["remaining"] - target) <= 45]
+            if eligible:
+                selected[label] = min(eligible, key=lambda s: abs(s["remaining"] - target))
+        for earlier, later in (("10m", "5m"), ("10m", "3m"), ("5m", "3m")):
+            if earlier not in selected or later not in selected:
+                continue
+            fa, fb = selected[earlier]["features"], selected[later]["features"]
+            fields = (
+                (("10m_midpoint", fa.get("midpoint_fine")), ("10m_depth", fa.get("depth")),
+                 ("5m_midpoint", fb.get("midpoint_fine")), ("5m_depth", fb.get("depth")),
+                 ("5m_odds_momentum", fb.get("odds_momentum")))
+                if later == "5m" else
+                ((earlier + "_midpoint", fa.get("midpoint_fine")), (earlier + "_depth", fa.get("depth")),
+                 (later + "_midpoint", fb.get("midpoint_fine")), (later + "_depth", fb.get("depth")),
+                 (later + "_odds_momentum", fb.get("odds_momentum")))
+            )
+            if any(value in (None, "", "unknown", "unavailable") for _, value in fields):
+                continue
+            combo_key = earlier + "_to_" + later + "|" + "|".join(
+                [name + "=" + str(value) for name, value in fields])
+            checkpoint_combo_groups[combo_key][market_id] = {
+                "snapshot": selected[later], "fields": [name for name, _ in fields],
+                "signature": [str(value) for _, value in fields], "checkpoint": later,
+            }
+    checkpoint_combo_candidates = []
+    for combo_key, by_market in checkpoint_combo_groups.items():
+        samples = [entry["snapshot"] for entry in by_market.values()]
+        if not samples:
+            continue
+        correct, brier, pnl = 0, 0.0, []
+        for sample in samples:
+            f, actual_up, up_p = sample["features"], sample["actual_up"], sample["up_p"]
+            predicted_up = up_p >= 0.5
+            correct += int(predicted_up == actual_up)
+            brier += (up_p - int(actual_up)) ** 2
+            entry = f.get("_snapshot_ask") if predicted_up else (
+                1.0 - f.get("_snapshot_bid") if f.get("_snapshot_bid") is not None else None)
+            try:
+                entry = float(entry) if entry is not None else None
+            except (TypeError, ValueError):
+                entry = None
+            if entry is not None and 0.0 < entry < 1.0:
+                pnl.append((1.0 / entry - 1.0) if predicted_up == actual_up else -1.0)
+        n = len(samples)
+        first = next(iter(by_market.values()))
+        checkpoint_combo_candidates.append({
+            "combo_key": combo_key, "checkpoint": first["checkpoint"],
+            "features": [{"name": name, "value": value}
+                         for name, value in zip(first["fields"], first["signature"])],
+            "contracts": n, "accuracy": correct / n, "brier": brier / n,
+            "priced_entries": len(pnl),
+            "mean_return_per_dollar": sum(pnl) / len(pnl) if pnl else None,
+            "positive_return_rate": sum(1 for x in pnl if x > 0) / len(pnl) if pnl else None,
+            "eligible": n >= min_samples,
+            "metric_source": "cross_checkpoint_combo_10m_5m_3m_quote_estimate",
+        })
+    checkpoint_combo_candidates.sort(key=lambda x: (
+        x["contracts"] >= min_samples, x["mean_return_per_dollar"] is not None,
+        x["mean_return_per_dollar"] if x["mean_return_per_dollar"] is not None else -999,
+        x["accuracy"], -x["brier"]), reverse=True)
+    checkpoint_combo_candidates = checkpoint_combo_candidates[:250]
     return {
         "method": "one_observation_per_contract_per_entry_bucket_plus_explicit_feature_combinations",
-        "combo_candidates": combo_candidates,
+        "combo_candidates": combo_candidates[:250],
+        "checkpoint_combo_candidates": checkpoint_combo_candidates,
         "settled_contracts": len(contracts),
         "minimum_contracts_per_bucket": min_samples,
         "buckets": output,
