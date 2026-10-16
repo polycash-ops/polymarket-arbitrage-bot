@@ -3,6 +3,7 @@ import argparse
 import asyncio
 import json
 import logging
+import os
 import time
 from types import SimpleNamespace
 from pathlib import Path
@@ -42,6 +43,9 @@ class TradingBot:
         self.decision_connectome = Connectome("decision", graph_config.get("decision", {}))
         self.research_connectome = Connectome("research", graph_config.get("research", {}))
         self.analysis_connectome = Connectome("analysis", graph_config.get("analysis", {}))
+        # Research and decision agents are paused by default; re-enable only via explicit service env vars.
+        self.enable_decision_connectome = os.getenv("ENABLE_DECISION_CONNECTOME", "false").strip().lower() in {"1", "true", "yes", "on"}
+        self.enable_research_connectome = os.getenv("ENABLE_RESEARCH_CONNECTOME", "false").strip().lower() in {"1", "true", "yes", "on"}
         self.scan_checkpoints_seen = {}
         self.last_market_quote_by_id = {}
         self.last_quote_change_by_id = {}
@@ -323,16 +327,22 @@ class TradingBot:
             yes_outcome_index=int(getattr(point, "yes_outcome_index", 0) or 0),
             connectome_event_id=f"scan:{market_id}:{int(now * 1000)}",
         )
-        decision = self.decision_connectome.predict(snapshot, role="decision")
-        research = self.research_connectome.predict(snapshot, role="research")
-        self.decision_connectome.record_scan_observation(
-            snapshot, role="decision", forecast_probability=decision["probability"],
-            forecast_up_probability=decision["up_probability"],
-        )
-        self.research_connectome.record_scan_observation(
-            snapshot, role="research", forecast_probability=research["probability"],
-            forecast_up_probability=research["up_probability"],
-        )
+        decision = (self.decision_connectome.predict(snapshot, role="decision")
+                    if self.enable_decision_connectome else
+                    {"probability": 0.5, "up_probability": 0.5, "samples": 0})
+        research = (self.research_connectome.predict(snapshot, role="research")
+                    if self.enable_research_connectome else
+                    {"probability": 0.5, "up_probability": 0.5, "samples": 0})
+        if self.enable_decision_connectome:
+            self.decision_connectome.record_scan_observation(
+                snapshot, role="decision", forecast_probability=decision["probability"],
+                forecast_up_probability=decision["up_probability"],
+            )
+        if self.enable_research_connectome:
+            self.research_connectome.record_scan_observation(
+                snapshot, role="research", forecast_probability=research["probability"],
+                forecast_up_probability=research["up_probability"],
+            )
         analysis = self.analysis_connectome.predict(snapshot, role="analysis")
         self.analysis_connectome.record_scan_observation(
             snapshot, role="analysis", forecast_probability=analysis["probability"],
@@ -361,11 +371,14 @@ class TradingBot:
         )
 
     async def _on_contract_settled(self, market_id: str, actual_up: bool):
-        d_count = self.decision_connectome.settle_market(market_id, actual_up)
-        r_count = self.research_connectome.settle_market(market_id, actual_up)
+        d_count = self.decision_connectome.settle_market(market_id, actual_up) if self.enable_decision_connectome else 0
+        r_count = self.research_connectome.settle_market(market_id, actual_up) if self.enable_research_connectome else 0
         a_count = self.analysis_connectome.settle_market(market_id, actual_up)
-        # Evaluate only after all checkpoints for this contract have been labelled.
-        for graph in (self.decision_connectome, self.research_connectome, self.analysis_connectome):
+        # Evaluate only enabled graphs after all checkpoints for this contract have been labelled.
+        enabled_graphs = ([self.decision_connectome] if self.enable_decision_connectome else [])
+        enabled_graphs += ([self.research_connectome] if self.enable_research_connectome else [])
+        enabled_graphs.append(self.analysis_connectome)
+        for graph in enabled_graphs:
             try:
                 run_walk_forward_if_due(graph)
             except Exception:
@@ -428,8 +441,12 @@ class TradingBot:
         else:
             opportunity.checkpoint = next((label for seconds, label in ((600, "10m"), (300, "5m"), (180, "3m"), (60, "1m"))
                                            if abs(remaining - seconds) <= 30), "between")
-        decision = self.decision_connectome.predict(opportunity, role="decision")
-        research = self.research_connectome.predict(opportunity, role="research")
+        decision = (self.decision_connectome.predict(opportunity, role="decision")
+                    if self.enable_decision_connectome else
+                    {"probability": 0.5, "samples": 0})
+        research = (self.research_connectome.predict(opportunity, role="research")
+                    if self.enable_research_connectome else
+                    {"probability": 0.5, "samples": 0})
         logger.info(
             "CONNECTOME_SIGNAL decision_probability=%.3f decision_samples=%d "
             "research_probability=%.3f research_samples=%d",
