@@ -626,6 +626,9 @@ class Connectome:
         with self._connect() as con:
             # One durable row per quote refresh. The unique event_id makes retries idempotent.
             if con.execute("SELECT 1 FROM observations WHERE event_id=?", (event_id,)).fetchone():
+                # A prior PostgreSQL write may have failed after the local cache committed.
+                # Retry a full idempotent sync rather than leaving that event stranded locally.
+                self._sync_full_to_postgres()
                 return event_id
             market_id = str(getattr(opportunity, "market_id", "") or "")
             previous_row = con.execute(
