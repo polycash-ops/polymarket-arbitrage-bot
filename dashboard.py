@@ -79,7 +79,7 @@ h1{font-size:clamp(1.5rem,4vw,2.2rem);line-height:1.15;margin:0 0 8px;letter-spa
  <div class="section-head"><h2>Current Polymarket BTC contract</h2><span class="badge warn" id="polyQuoteStatus">CONNECTING</span></div>
  <div class="quote-grid">
   <article class="card"><div class="metric-label">Active 15-minute contract</div><div class="quote-value" id="polyContract">—</div><div class="quote-meta" id="polyQuestion">—</div><div class="quote-meta" id="polyWindow">Contract window: —</div></article>
-  <article class="card"><div class="metric-label">UP token · live best bid / ask</div><div class="quote-value" id="polyUpMid">—</div><div class="quote-row"><span>Bid</span><strong id="polyUpBid">—</strong><span>Ask</span><strong id="polyUpAsk">—</strong></div><div class="quote-meta" id="polyQuoteTime">Quote received: —</div></article>
+  <article class="card"><div class="metric-label">UP / DOWN · implied probability</div><div class="quote-row"><span>UP chance</span><strong class="quote-value" id="polyUpPct">—</strong></div><div class="quote-row"><span>DOWN chance</span><strong class="quote-value" id="polyDownPct">—</strong></div><div class="quote-meta">Calculated from the UP-token midpoint</div><div class="quote-meta" id="polyQuoteTime">Quote received: —</div><div class="quote-meta">UP token bid / ask: <strong id="polyUpBid">—</strong> / <strong id="polyUpAsk">—</strong></div></article>
   <article class="card"><div class="metric-label">Reference BTC price timestamp</div><div class="quote-value" id="refPrice">—</div><div class="quote-meta" id="refSource">Reference source: —</div><div class="quote-meta" id="refTime">Timestamp: —</div><div class="quote-meta" id="polyRefTime">Contract start/reference time: —</div></article>
  </div>
 </div></section>
@@ -134,7 +134,7 @@ async function refreshLiveQuotes(){
    put(prefix+"Time","Received: "+fmtTime(q.received_at));put(prefix+"Age",q.error?"Unavailable: "+q.error:ageLabel(q.received_at));
   }
   const p=d.polymarket||{};put("polyContract",p.slug||"No active 15m BTC contract found");put("polyQuestion",p.question||"");put("polyWindow",(p.start_at||p.end_at)?"Contract window: "+fmtTime(p.start_at)+" – "+fmtTime(p.end_at):"Contract window: —");
-  put("polyUpMid",p.midpoint==null?"—":cents(p.midpoint));put("polyUpBid",cents(p.bid));put("polyUpAsk",cents(p.ask));put("polyQuoteTime","Quote received: "+fmtTime(p.received_at));
+  const upPct=p.midpoint==null?null:Math.max(0,Math.min(100,100*Number(p.midpoint)));put("polyUpPct",upPct==null?"—":upPct.toFixed(1)+"%");put("polyDownPct",upPct==null?"—":(100-upPct).toFixed(1)+"%");put("polyUpBid",cents(p.bid));put("polyUpAsk",cents(p.ask));put("polyQuoteTime","Quote received: "+fmtTime(p.received_at));
   const status=el("polyQuoteStatus");if(status){status.textContent=p.error?"QUOTE UNAVAILABLE":p.slug?"LIVE QUOTE":"NO CONTRACT";status.className="badge "+(p.error||!p.slug?"warn":"good")}
   const ref=d.reference||{};put("refPrice",usd(ref.price));put("refSource","Reference source: "+(ref.source||"—"));put("refTime","Timestamp: "+fmtTime(ref.received_at));put("polyRefTime","Contract start/reference time: "+fmtTime(p.start_at));
   put("quoteRefresh","Last refreshed "+new Date().toLocaleTimeString("en-US",{timeZone:"America/New_York"})+" ET");
