@@ -11,7 +11,8 @@ pandas==2.2.0
 numpy==1.26.3
 pyyaml==6.0.1
 
-# Outcome-trained Connectome graphs use Python's built-in SQLite support.
+# SQLite working cache plus durable paid PostgreSQL persistence
+psycopg[binary]==3.2.9
 
 # Market data and trading
 ccxt==4.2.25  # Cryptocurrency exchange library
