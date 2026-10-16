@@ -33,34 +33,32 @@ def _ensure_bot():
 
 @app.get("/")
 def index():
-    _ensure_bot()
+    """Serve only the independent Biological Reservoir research dashboard."""
     return """<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <meta name="theme-color" content="#101722">
-<title>BTC Polymarket Connectome Trend Research</title>
+<title>Biological Reservoir · Independent Research Agent</title>
 <style>
-:root{color-scheme:dark;--bg:#0b111a;--panel:#141e2b;--panel2:#101925;--line:#273649;--text:#edf3fa;--muted:#9aabc0;--green:#54d6a0;--red:#ff8585;--amber:#ffd078;--blue:#84baff}
+:root{color-scheme:dark;--bg:#0b111a;--panel:#141e2b;--panel2:#101925;--line:#273649;--text:#edf3fa;--muted:#9aabc0;--green:#54d6a0;--red:#ff8585;--amber:#ffd078}
 *{box-sizing:border-box}body{margin:0;background:radial-gradient(ellipse at top,#17283a 0,#0b111a 55%);color:var(--text);font:15px/1.5 system-ui,-apple-system,Segoe UI,Roboto,sans-serif}
-main{max-width:1120px;margin:0 auto;padding:clamp(14px,4vw,34px)}header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:22px}
-h1{font-size:clamp(1.5rem,4vw,2.2rem);line-height:1.15;margin:0 0 8px;letter-spacing:-.03em}h2{font-size:1.05rem;margin:0 0 14px}.subtitle{color:var(--muted);margin:0}.pill{display:inline-flex;align-items:center;gap:8px;border:1px solid #24664e;background:#123327;color:#a8f0cf;border-radius:999px;padding:7px 12px;font-size:.83rem;font-weight:700;white-space:nowrap}.dot{width:7px;height:7px;border-radius:50%;background:var(--green)}
-.section{margin-top:22px}.section-head{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px}.section-head h2{margin:0}.updated,.small{font-size:.82rem;color:var(--muted)}
-.cards{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px}.card{min-width:0;background:linear-gradient(145deg,var(--panel),var(--panel2));border:1px solid var(--line);border-radius:16px;padding:16px;box-shadow:0 8px 24px #00000018}.metric-label{color:var(--muted);font-size:.82rem;margin-bottom:6px}.metric{font-size:clamp(1.2rem,3vw,1.75rem);font-weight:750;letter-spacing:-.035em;overflow-wrap:anywhere}.metric-sub{font-size:.8rem;color:var(--muted);margin-top:5px}
-.panel{background:var(--panel);border:1px solid var(--line);border-radius:16px;overflow:hidden}.panel-inner{padding:18px}.statusline{display:flex;align-items:center;gap:10px;flex-wrap:wrap}.badge{border-radius:8px;padding:4px 8px;font-size:.78rem;font-weight:750;background:#263449;color:#dce8f8}.badge.good{background:#123327;color:#a8f0cf}.badge.warn{background:#392d17;color:var(--amber)}.badge.bad{background:#3a2026;color:#ffb4b4}
-.grid-two{display:grid;grid-template-columns:1fr 1fr;gap:12px}.table-wrap{overflow-x:auto}table{border-collapse:collapse;width:100%;min-width:600px}th,td{text-align:left;padding:12px 14px;border-bottom:1px solid var(--line);white-space:nowrap}th{color:var(--muted);font-size:.76rem;text-transform:uppercase;letter-spacing:.06em;font-weight:700;background:#111a26}tbody tr:last-child td{border-bottom:0}.empty{text-align:center;color:var(--muted);padding:24px 16px}.feed{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:12px}.feed-item{background:#101925;border:1px solid var(--line);border-radius:12px;padding:14px;min-width:0}.feed-name{color:var(--muted);font-size:.82rem}.feed-price{font-size:1.2rem;font-weight:750;margin-top:4px}#error{display:none;margin:12px 0;background:#3a2026;border:1px solid #71404a;color:#ffd6d6;border-radius:12px;padding:12px}.foot{color:var(--muted);font-size:.8rem;margin:22px 2px 0}
-@media(max-width:850px){.cards{grid-template-columns:repeat(2,minmax(0,1fr))}.grid-two{grid-template-columns:1fr}}
-@media(max-width:440px){main{padding:12px}.card{padding:13px}.feed{grid-template-columns:1fr}.metric{font-size:1.4rem}.pill{font-size:.76rem}}
+main{max-width:1200px;margin:0 auto;padding:clamp(14px,4vw,34px)}header{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap;margin-bottom:22px}
+h1{font-size:clamp(1.5rem,4vw,2.2rem);line-height:1.15;margin:0 0 8px;letter-spacing:-.03em}h2{font-size:1.05rem;margin:0}.subtitle,.small{color:var(--muted)}.subtitle{margin:0}.small{font-size:.82rem}
+.pill{display:inline-flex;align-items:center;gap:8px;border:1px solid #24664e;background:#123327;color:#a8f0cf;border-radius:999px;padding:7px 12px;font-size:.83rem;font-weight:700;white-space:nowrap}
+.section{margin-top:18px}.panel{background:var(--panel);border:1px solid var(--line);border-radius:16px;overflow:hidden}.panel-inner{padding:18px}.section-head{display:flex;justify-content:space-between;align-items:center;gap:12px;flex-wrap:wrap;margin-bottom:12px}
+.cards{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:12px}.card{min-width:0;background:linear-gradient(145deg,var(--panel),var(--panel2));border:1px solid var(--line);border-radius:16px;padding:16px}.metric-label{color:var(--muted);font-size:.82rem;margin-bottom:6px}.metric{font-size:clamp(1.2rem,3vw,1.75rem);font-weight:750;letter-spacing:-.035em;overflow-wrap:anywhere}.metric-sub{font-size:.8rem;color:var(--muted);margin-top:5px}
+.badge{border-radius:8px;padding:4px 8px;font-size:.78rem;font-weight:750;background:#263449;color:#dce8f8}.badge.good{background:#123327;color:#a8f0cf}.badge.warn{background:#392d17;color:var(--amber)}.badge.bad{background:#3a2026;color:#ffb4b4}
+.table-wrap{overflow-x:auto}table{border-collapse:collapse;width:100%;min-width:760px}th,td{text-align:left;padding:12px 14px;border-bottom:1px solid var(--line);white-space:nowrap}th{color:var(--muted);font-size:.76rem;text-transform:uppercase;letter-spacing:.06em;font-weight:700;background:#111a26}tbody tr:last-child td{border-bottom:0}.empty{text-align:center;color:var(--muted);padding:24px 16px}.foot{color:var(--muted);font-size:.8rem;margin:22px 2px 0}
+@media(max-width:850px){.cards{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:440px){main{padding:12px}.card{padding:13px}.metric{font-size:1.4rem}}
 </style>
 </head>
 <body><main>
-<header><div><h1>BTC Polymarket Connectome Trend Research</h1><p class="subtitle">Three independent Connectomes · 5-second quote snapshots · 15m and hourly directional forecasting · trade execution disabled</p></div><div style="display:flex;flex-wrap:wrap;align-items:center;justify-content:flex-end;gap:10px"><span id="dashboardClock" class="pill" style="font-variant-numeric:tabular-nums">--:--:-- ET</span><span class="pill"><span class="dot"></span> FORECAST-ONLY MODE</span></div></header>
-<div id="error" role="alert"></div>
-
-<section class="section panel" id="biologicalReservoirPanel"><div class="panel-inner">
- <div class="section-head"><h2>Biological Reservoir · independent research agent</h2><span id="bioStatus" class="badge warn">CHECKING</span></div>
- <p class="small">Separate BTC-history reservoir research worker · paper forecasting only · live trading hard-blocked</p>
+<header><div><h1>Biological Reservoir · independent research agent</h1><p class="subtitle">Persistent BTC-history research · graph observations and learning evidence · paper forecasting only</p></div><div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px"><span id="clock" class="pill">--:--:-- ET</span><span class="pill">LIVE TRADING BLOCKED</span></div></header>
+<section class="section panel"><div class="panel-inner">
+ <div class="section-head"><h2>Reservoir agent status</h2><span id="bioStatus" class="badge warn">CHECKING</span></div>
+ <p class="small" id="bioMessage">Connecting to persisted reservoir telemetry…</p>
  <div class="cards" style="margin-top:12px">
   <article class="card"><div class="metric-label">Graph nodes</div><div class="metric" id="bioNodes">—</div><div class="metric-sub" id="bioGraph">Graph pending</div></article>
   <article class="card"><div class="metric-label">Graph edges</div><div class="metric" id="bioEdges">—</div><div class="metric-sub" id="bioSnapshot">Latest snapshot: —</div></article>
@@ -68,328 +66,48 @@ h1{font-size:clamp(1.5rem,4vw,2.2rem);line-height:1.15;margin:0 0 8px;letter-spa
   <article class="card"><div class="metric-label">Learning updates</div><div class="metric" id="bioLearning">—</div><div class="metric-sub" id="bioAccuracy">Resolved accuracy: —</div></article>
   <article class="card"><div class="metric-label">Model / market Brier</div><div class="metric" id="bioBrier">—</div><div class="metric-sub" id="bioExpansion">Last graph expansion: —</div></article>
  </div>
- <p class="small" id="bioMessage">Loading persisted agent telemetry…</p>
+</div></section>
+<section class="section panel"><div class="panel-inner">
+ <div class="section-head"><h2>Recent reservoir observations</h2><span class="small" id="refreshTime">Waiting for first refresh</span></div>
  <div class="table-wrap"><table><thead><tr><th>Captured</th><th>Checkpoint</th><th>Contract</th><th>Forecast</th><th>Up probability</th><th>Market midpoint</th><th>Outcome</th><th>Brier</th><th>Learned</th></tr></thead><tbody id="bioRows"><tr><td colspan="9" class="empty">Connecting to reservoir telemetry…</td></tr></tbody></table></div>
 </div></section>
-
-<section class="section">
- <div class="section-head"><h2>Performance overview</h2><span class="updated" id="updated">Waiting for status…</span></div>
- <div class="cards">
-  <article class="card"><div class="metric-label">Trade execution</div><div class="metric" id="balance">—</div><div class="metric-sub">Simulation only</div></article>
-  <article class="card"><div class="metric-label">Trading P/L</div><div class="metric" id="profit">—</div><div class="metric-sub" id="todayProfit">Settled trades only</div></article>
-  <article class="card"><div class="metric-label">Trades</div><div class="metric" id="tradesCount">—</div><div class="metric-sub" id="winRate">Win rate: —</div></article>
-  <article class="card"><div class="metric-label">Opportunities detected</div><div class="metric" id="opportunities">—</div><div class="metric-sub" id="uptime">Uptime: —</div></article>
-  <article class="card"><div class="metric-label">Polymarket scans</div><div class="metric" id="scanCount">—</div><div class="metric-sub">Completed scan cycles</div></article>
- </div>
-</section>
-<section class="section panel"><div class="panel-inner">
- <div class="section-head"><h2>Paper equity curve</h2><span class="small" id="curveSummary">Settled trades only</span></div>
- <canvas id="profitChart" height="220" style="display:block;width:100%;height:220px" aria-label="Cumulative paper balance after settled trades"></canvas>
- <p class="small">Open positions and unsettled results are excluded. The curve reflects the current process's in-memory paper-trade history.</p>
-</div></section>
-<section class="section panel"><div class="panel-inner">
- <div class="section-head"><h2>Bot status</h2><div class="statusline"><span id="runningBadge" class="badge">Checking…</span><span class="badge good">LIVE TRADING BLOCKED</span></div></div>
- <div class="grid-two">
-  <div><div class="metric-label">Mode</div><div id="mode" style="font-weight:700">—</div></div>
-  <div><div class="metric-label">Average profit per settled trade</div><div id="avgProfit" style="font-weight:700">—</div></div>
-  <div><div class="metric-label">Best settled trade</div><div id="bestTrade" style="font-weight:700">—</div></div>
-  <div><div class="metric-label">Worst settled trade</div><div id="worstTrade" style="font-weight:700">—</div></div>
- </div>
-</div></section>
-
-
-
-
-<section class="section panel"><div class="panel-inner">
- <div class="section-head"><h2>Entry timing experiment · contract-aligned</h2><span class="small" id="entryTimingSummary">Waiting for settled contracts…</span></div>
- <p class="small">Each contract contributes at most one snapshot per timing bucket. Returns estimate buying UP at the observed ask or DOWN at 1 − UP bid, then settling to $1/$0. These are quote-based research estimates—not verified fills—and exclude fees, slippage and latency. “Best” is provisional until tested on a later chronological holdout.</p>
- <div class="table-wrap"><table><thead><tr><th>Connectome</th><th>Entry timing</th><th>Contracts</th><th>Directional accuracy</th><th>Up-probability Brier</th><th>Priced entries</th><th>Mean return / $1</th><th>Profitable entries</th></tr></thead><tbody id="entryTimingRows"><tr><td colspan="8" class="empty">Waiting for settled contract snapshots</td></tr></tbody></table></div>
-</div></section>
-
-<section class="section">
- <div class="section-head"><h2>Market data</h2><span class="small">Latest observed exchange prices</span></div>
- <div class="feed">
-  <div class="feed-item"><div class="feed-name">Binance</div><div class="feed-price" id="binance">—</div><div class="small" id="bcSpread">vs Coinbase: —</div></div>
-  <div class="feed-item"><div class="feed-name">Coinbase</div><div class="feed-price" id="coinbase">—</div><div class="small" id="ckSpread">vs Kraken: —</div></div>
-  <div class="feed-item"><div class="feed-name">Kraken</div><div class="feed-price" id="kraken">—</div><div class="small" id="bkSpread">vs Binance: —</div></div>
- </div>
-</section>
-<section class="section panel"><div class="panel-inner section-head"><h2>Recent paper trades</h2><span class="small" id="tradeSummary">0 recorded</span></div>
- <div class="table-wrap"><table><thead><tr><th>Trade</th><th>Timestamp (ET)</th><th>Action</th><th>Direction</th><th>Stake</th><th>Execution status</th><th>Result</th><th>P/L</th><th>Signal score</th></tr></thead><tbody id="tradeRows"><tr><td class="empty" colspan="7">No paper trades recorded yet.</td></tr></tbody></table></div>
-</section>
-<p class="foot">Observed quotes are not guaranteed executable prices. This dashboard is research and paper simulation only; live order execution remains hard-blocked.</p>
+<p class="foot">This dashboard reads only the Biological Reservoir research tables. It does not start or control the Polymarket arbitrage bot. All activity is research-only; live trading is hard-blocked.</p>
 </main>
 <script>
 const el=id=>document.getElementById(id);
-const num=v=>typeof v==="number"&&Number.isFinite(v)?v:(v!==null&&v!==undefined&&v!==""&&Number.isFinite(Number(v))?Number(v):null);
-const money=v=>{const n=num(v);return n===null?"—":(n<0?"−":"")+"$"+Math.abs(n).toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})};
-const pct=v=>{const n=num(v);return n===null?"—":(n*100).toFixed(2)+"%"};
-const price=v=>{const n=num(v);return n===null?"—":"$"+n.toLocaleString("en-US",{minimumFractionDigits:2,maximumFractionDigits:2})};
-const duration=v=>{const n=Math.max(0,Math.floor(num(v)||0)),h=Math.floor(n/3600),m=Math.floor(n%3600/60),s=n%60;return h?h+"h "+m+"m":m?m+"m "+s+"s":s+"s"};
-function put(id,value){const node=el(id);if(node)node.textContent=value}
-function paintConnectomes(graphs){
- const fmt=n=>num(n)===null?"—":Math.trunc(num(n)).toLocaleString("en-US");
- const rate=g=>num(g&&g.win_rate)===null?"Not yet measured":pct(g.win_rate);
- const d=graphs&&graphs.decision||{},r=graphs&&graphs.research||{},a=graphs&&graphs.analysis||{};
- put("analysisNodes",fmt(a.nodes_active)+" / "+fmt(a.node_capacity));
- put("analysisEdges",fmt(a.edges_active)+" / "+fmt(a.edge_capacity));
- put("analysisObservations",fmt(a.observations));
- put("analysisRecentSnapshots",fmt(a.observations_last_15m)+" / "+(num(a.last_observation_age_seconds)===null?"no snapshot":duration(a.last_observation_age_seconds)+" ago"));
- put("analysisRecentNodes",fmt(a.nodes_touched_last_15m));
- put("analysisRecentEdges",fmt(a.edges_touched_last_15m));
- put("analysisNewGraph",fmt(a.new_nodes_last_15m)+" new nodes · "+fmt(a.new_edges_last_15m)+" new edges");
- put("analysisTraversals",fmt(a.total_node_visits)+" visits · "+fmt(a.total_edge_traversals)+" edge traversals");
- put("analysisLearnedEdges",fmt(a.learned_edge_updates)+" verified-outcome edge updates");
- put("analysisSettled",fmt(a.settled_observations)+" settled · "+rate(a)+" · target ≥98% (not guaranteed)");
- put("analysisBrier",(num(a.brier_score)===null?"—":Number(a.brier_score).toFixed(3))+" vs "+(num(a.market_baseline_brier)===null?"—":Number(a.market_baseline_brier).toFixed(3)));
- put("decisionAccuracy",rate(d));put("decisionAccuracyDetail",fmt(d.settled_observations)+" settled · "+fmt(Math.max(0,(num(d.observations)||0)-(num(d.settled_observations)||0)))+" pending");
- put("decisionBrier",num(d.brier_score)===null?"Awaiting verified settlements":Number(d.brier_score).toFixed(3)+" vs market "+(num(d.market_baseline_brier)===null?"—":Number(d.market_baseline_brier).toFixed(3)));
- put("decisionNodes",fmt(d.nodes_active)+" / "+fmt(d.node_capacity));put("decisionEdges",fmt(d.edges_active)+" / "+fmt(d.edge_capacity));
- put("decisionActivity",fmt(d.observations_last_15m)+" snapshots/15m · "+fmt(d.nodes_touched_last_15m)+" nodes touched · "+fmt(d.edges_touched_last_15m)+" edges touched · "+fmt(d.new_nodes_last_15m)+" new nodes / "+fmt(d.new_edges_last_15m)+" new edges · "+fmt(d.learned_edge_updates)+" verified weight updates");
- put("researchAccuracy",rate(r));put("researchAccuracyDetail",fmt(r.settled_observations)+" settled · "+fmt(Math.max(0,(num(r.observations)||0)-(num(r.settled_observations)||0)))+" pending");
- put("researchBrier",num(r.brier_score)===null?"Awaiting verified settlements":Number(r.brier_score).toFixed(3)+" vs market "+(num(r.market_baseline_brier)===null?"—":Number(r.market_baseline_brier).toFixed(3)));
- put("researchNodes",fmt(r.nodes_active)+" / "+fmt(r.node_capacity));put("researchEdges",fmt(r.edges_active)+" / "+fmt(r.edge_capacity));
- put("researchActivity",fmt(r.observations_last_15m)+" snapshots/15m · "+fmt(r.nodes_touched_last_15m)+" nodes touched · "+fmt(r.edges_touched_last_15m)+" edges touched · "+fmt(r.new_nodes_last_15m)+" new nodes / "+fmt(r.new_edges_last_15m)+" new edges · "+fmt(r.learned_edge_updates)+" verified weight updates");
- const paintCheckpointTable=(id,g)=>{
-  const body=el(id);if(!body)return;body.replaceChildren();
-  const labels=["first_seen","10m","5m","3m","1m","continuous"],data=g.checkpoint_performance||{};
-  labels.forEach(label=>{
-   const v=data[label]||{},tr=document.createElement("tr");
-   const cells=[label,fmt(v.observations??0),fmt(v.pending??0),fmt(v.settled??0),
-    num(v.win_rate)===null?"—":pct(v.win_rate),
-    num(v.brier_score)===null?"—":Number(v.brier_score).toFixed(3),
-    num(v.market_baseline_brier)===null?"—":Number(v.market_baseline_brier).toFixed(3)];
-   cells.forEach((value,index)=>{const td=document.createElement("td");td.textContent=String(value);if(index===0)td.style.fontWeight="700";tr.appendChild(td)});
-   body.appendChild(tr);
-  });
- };
- paintCheckpointTable("decisionCheckpoints",d);paintCheckpointTable("researchCheckpoints",r);
- put("decisionBestCheckpoint",d.recommended_checkpoint||"Awaiting settled snapshots");
- put("researchBestCheckpoint",r.recommended_checkpoint||"Awaiting settled snapshots");
- const trainingBody=el("trainingRows");
- if(trainingBody){
-  trainingBody.replaceChildren();
-  const names=[["decision","Decision"],["research","Research"],["analysis","Analysis"]];
-  let runs=0;
-  names.forEach(([key,label])=>{
-   const g=graphs&&graphs[key]||{},t=g.training||{},v=t.latest||{};
-   runs+=num(t.run_count)||0;
-   const tr=document.createElement("tr");
-   const values=[label,fmt(t.run_count||0),v.started_at?new Date(v.started_at).toLocaleString("en-US",{timeZone:"UTC"}):"No run",
-    fmt(v.details&&v.details.validation_samples||0),
-    num(v.baseline_brier)===null?"—":Number(v.baseline_brier).toFixed(4),
-    num(v.candidate_brier)===null?"—":Number(v.candidate_brier).toFixed(4),
-    fmt(v.changed_edges||0),
-    v.accepted===true?"ACCEPTED":v.accepted===false?"REJECTED":"Awaiting run"];
-   values.forEach((value,index)=>{const td=document.createElement("td");td.textContent=String(value);if(index===0||index===7)td.style.fontWeight="700";tr.appendChild(td)});
-   trainingBody.appendChild(tr);
-  });
-  put("trainingSummary",runs+" saved walk-forward runs across three graphs");
- }
- const candidateBody=el("candidateProfileRows");
-  if(candidateBody){
-   candidateBody.replaceChildren();
-   const registry=(graphs&&graphs.decision&&graphs.decision.candidate_profiles)||{},candidates=Array.isArray(registry.top_five)?registry.top_five:[];
-   candidates.forEach((candidate)=>{
-    const m=candidate.metrics||{},settings=candidate.settings||{},readiness=candidate.readiness||{};
-    const tr=document.createElement("tr");
-    const updated=candidate.profile_updated_at?new Date(candidate.profile_updated_at).toLocaleString():"—";
-    const seconds=num(settings.target_seconds_to_contract_close);
-    const checkpoint=settings.checkpoint?settings.checkpoint+" checkpoint":(seconds===null?(settings.entry_timing_bucket||"first seen"):Math.floor(seconds/60)+"m to close");
-    const combo=Array.isArray(settings.feature_combination)?settings.feature_combination.map(x=>String(x.name)+"="+String(x.value)).join(" + "):"";
-    const candidateLabel=candidate.display_name||((candidate.graph_name||candidate.graph_key||"Connectome")+" · "+(settings.entry_timing_bucket||candidate.candidate_id||"candidate"));
-    const detail=(candidate.strategy_type==="checkpoint_signal_combination"?"COMBO · ":"TIMING · ")+candidateLabel+(combo?" · "+combo:"");
-    const vals=[candidate.rank??"—",detail,
-      String(candidate.status||"COLLECTING_DATA").replaceAll("_"," "),checkpoint,
-      fmt(m.settled_contracts||0),m.accuracy===null||m.accuracy===undefined?"—":pct(m.accuracy),
-      num(m.brier)===null?"—":Number(m.brier).toFixed(4),
-      num(m.estimated_return_per_dollar)===null?"—":pct(m.estimated_return_per_dollar),
-      num(m.positive_return_rate)===null?"—":pct(m.positive_return_rate),
-      String(readiness.overall_status||"NOT_READY").replaceAll("_"," "),updated];
-    vals.forEach((v,i)=>{const td=document.createElement("td");td.textContent=String(v);if(i===0||i===2)td.style.fontWeight="700";tr.appendChild(td)});
-    candidateBody.appendChild(tr);
-   });
-   if(!candidates.length){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=11;td.className="empty";td.textContent="No candidate profiles saved yet; waiting for settled bucket metrics.";tr.appendChild(td);candidateBody.appendChild(tr)}
-   const persistence=registry.profile_persistence||"UNKNOWN";
-   put("candidateProfileSummary",candidates.length+" shortlisted · profile DB "+String(persistence).replaceAll("_"," ").toLowerCase()+" · refreshed "+(registry.updated_at?new Date(registry.updated_at).toLocaleTimeString():"not yet"));
-  }
-  const readinessBody=el("readinessRows"),gateBody=el("readinessGateRows");
-  const readinessNames=[["decision","Decision"],["research","Research"],["analysis","Analysis"]];
-  let readyReports=0,gateCount=0;
-  if(readinessBody&&gateBody){
-   readinessBody.replaceChildren();gateBody.replaceChildren();
-   const statusText=(v)=>String(v??"NOT_MEASURABLE").replaceAll("_"," ");
-   const statusCell=(v)=>{const td=document.createElement("td");td.textContent=statusText(v);td.style.fontWeight="700";if(v==="PASS")td.style.color="#54d6a0";else if(v==="FAIL"||v==="NOT_READY"||v==="BLOCKED")td.style.color="#ff8585";else td.style.color="#ffd078";return td};
-   readinessNames.forEach(([key,label])=>{
-    const g=graphs&&graphs[key]||{},report=g.readiness||{},e=report.evidence||{},checks=report.checks||{},trade=report.trade_metrics||{};
-    if(report.generated_at)readyReports++;
-    const tr=document.createElement("tr");
-    const vals=[label,statusText(report.overall_status||"REPORT UNAVAILABLE"),fmt(e.settled_contracts||0),
-      pct(e.contract_forecast_win_rate),num(e.contract_forecast_brier)===null?"—":Number(e.contract_forecast_brier).toFixed(4),
-      num(e.market_baseline_brier)===null?"—":Number(e.market_baseline_brier).toFixed(4),
-      trade.daily_return===null||trade.daily_return===undefined?"NOT MEASURABLE":pct(trade.daily_return),
-      trade.monthly_return===null||trade.monthly_return===undefined?"NOT MEASURABLE":pct(trade.monthly_return),
-      trade.max_drawdown===null||trade.max_drawdown===undefined?"NOT MEASURABLE":pct(trade.max_drawdown),
-      trade.trades_per_day===null||trade.trades_per_day===undefined?"NOT MEASURABLE":fmt(trade.trades_per_day),
-      checks.candidate_model_actively_applied&&checks.candidate_model_actively_applied.actual===true?"YES":"NO"];
-    vals.forEach((value,i)=>{const td=document.createElement("td");td.textContent=String(value);if(i===1)td.style.fontWeight="700";tr.appendChild(td)});
-    readinessBody.appendChild(tr);
-    Object.entries(checks).forEach(([check,v])=>{
-     gateCount++;const row=document.createElement("tr");
-     const actual=(v.actual===null||v.actual===undefined)?"Not recorded":
-       (typeof v.actual==="number"&&check.toLowerCase().includes("rate")?pct(v.actual):
-       (typeof v.actual==="number"&&check.toLowerCase().includes("brier")?Number(v.actual).toFixed(4):String(v.actual)));
-     const target=v.target!==undefined?pct(v.target):v.required!==undefined?String(v.required):v.target_exclusive_max!==undefined?"< "+pct(v.target_exclusive_max):(v.note||"See report");
-     [label,check.replaceAll("_"," "),statusCell(v.status),actual,target].forEach((value,i)=>{if(i===2)row.appendChild(value);else{const td=document.createElement("td");td.textContent=String(value);row.appendChild(td)}});
-     gateBody.appendChild(row);
-    });
-   });
-   if(!readyReports){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=11;td.className="empty";td.textContent="No persisted readiness report available yet.";tr.appendChild(td);readinessBody.appendChild(tr)}
-   if(!gateCount){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=5;td.className="empty";td.textContent="No readiness checks available.";tr.appendChild(td);gateBody.appendChild(tr)}
-   put("readinessSummary",readyReports+" saved readiness reports · "+(readinessNames.length-readyReports)+" unavailable · live trading remains disabled");
-  }
-  const entryBody=el("entryTimingRows");
- if(entryBody){
-  entryBody.replaceChildren();
-  const names=[["decision","Decision"],["research","Research"],["analysis","Analysis"]];
-  let rowCount=0,settledContracts=0;
-  names.forEach(([key,label])=>{
-   const timing=((graphs&&graphs[key]||{}).entry_timing)||{};
-   settledContracts=Math.max(settledContracts,num(timing.settled_contracts)||0);
-   const buckets=Array.isArray(timing.buckets)?timing.buckets:[];
-   buckets.forEach(v=>{
-    rowCount++;
-    const tr=document.createElement("tr");
-    const isBest=timing.best_entry_bucket===v.bucket&&v.eligible;
-    const ret=num(v.mean_return_per_dollar);
-    const vals=[label+(isBest?" · provisional best":""),v.bucket,fmt(v.contracts),pct(v.accuracy),
-      num(v.brier)===null?"—":Number(v.brier).toFixed(4),fmt(v.priced_entries),
-      ret===null?"—":(ret>=0?"+":"")+(ret*100).toFixed(2)+"%",
-      num(v.positive_return_rate)===null?"—":pct(v.positive_return_rate)];
-    vals.forEach((value,index)=>{const td=document.createElement("td");td.textContent=String(value);if(index===0)td.style.fontWeight="700";tr.appendChild(td)});
-    entryBody.appendChild(tr);
-   });
-  });
-  if(!rowCount){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=8;td.className="empty";td.textContent="No settled entry-timing samples yet.";tr.appendChild(td);entryBody.appendChild(tr)}
-  put("entryTimingSummary",settledContracts+" settled contracts per graph · timing rankings require at least 5 contracts per bucket");
- }
- put("connectomeSummary","Checkpoint exploration shows recorded, pending, and settled snapshots separately. Accuracy uses settled snapshots only; internal reference trades are not shown");
-}
-function tradeTimestamp(t){
- const raw=num(t.executed_at??t.timestamp??t.created_at);
- if(raw===null)return "—";
- const date=new Date(raw<1e12?raw*1000:raw);
- if(!Number.isFinite(date.getTime()))return "—";
- return date.toLocaleString("en-US",{timeZone:"America/New_York",month:"2-digit",day:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:true});
-}
-function tradeResult(t){
- const status=String(t.status??"").toLowerCase();
- if(status==="failed"||status==="cancelled")return "FAILURE";
- if(t.resolved===true||status==="settled"){
-  const pnl=num(t.profit_loss_usd??t.profit_loss);
-  if(pnl===null)return "SETTLED";
-  return pnl>0.000001?"SUCCESS":pnl< -0.000001?"FAILURE":"BREAK-EVEN";
- }
- return "PENDING";
-}
-function paintTrades(trades){
- const tbody=el("tradeRows");tbody.replaceChildren();put("tradeSummary",trades.length+" recorded · updates every 5 seconds");
- if(!trades.length){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=9;td.className="empty";td.textContent="No paper trades recorded yet.";tr.appendChild(td);tbody.appendChild(tr);return}
- trades.forEach((t,i)=>{
-  const tr=document.createElement("tr"),result=tradeResult(t);
-  const vals=[t.id??(i+1),tradeTimestamp(t),t.action??"—",t.direction??"—",money(t.amount_usd??t.amount),String(t.status??"—").toUpperCase(),result,money(t.profit_loss_usd??t.profit_loss),num(t.confidence)===null?"—":(num(t.confidence)<=1?pct(t.confidence):num(t.confidence).toFixed(1)+"%")];
-  vals.forEach((v,j)=>{
-   const td=document.createElement("td");td.textContent=String(v);
-   if(j===5||j===6){const b=document.createElement("span");b.className="badge "+(j===6?(result==="SUCCESS"?"good":result==="FAILURE"?"bad":"warn"):(/settled/i.test(String(v))?"good":/failed|cancelled/i.test(String(v))?"bad":/executed/i.test(String(v))?"warn":"warn"));b.textContent=String(v);td.replaceChildren(b)}
-   tr.appendChild(td)
-  });tbody.appendChild(tr)
- })
-}
-function drawProfitCurve(points){
- const canvas=el("profitChart");if(!canvas)return;
- const width=Math.max(300,canvas.clientWidth||600),height=220,dpr=window.devicePixelRatio||1;
- canvas.width=Math.round(width*dpr);canvas.height=Math.round(height*dpr);
- const ctx=canvas.getContext("2d");ctx.scale(dpr,dpr);ctx.clearRect(0,0,width,height);
- const pad={l:62,r:14,t:14,b:30},plotW=width-pad.l-pad.r,plotH=height-pad.t-pad.b;
- const vals=points.map(p=>num(p.balance)).filter(v=>v!==null);
- if(!vals.length){ctx.fillStyle="#9aabc0";ctx.font="13px system-ui";ctx.fillText("Waiting for settled paper trades…",pad.l,height/2);put("curveSummary","No settled trades yet");return}
- let lo=Math.min(...vals),hi=Math.max(...vals);if(lo===hi){lo-=1;hi+=1}const extra=(hi-lo)*0.12;lo-=extra;hi+=extra;
- ctx.strokeStyle="#273649";ctx.fillStyle="#9aabc0";ctx.font="11px system-ui";ctx.lineWidth=1;
- for(let i=0;i<4;i++){const y=pad.t+plotH*i/3;ctx.beginPath();ctx.moveTo(pad.l,y);ctx.lineTo(width-pad.r,y);ctx.stroke();const v=hi-(hi-lo)*i/3;ctx.fillText("$"+Math.round(v).toLocaleString("en-US"),4,y+4)}
- const xy=points.map((p,i)=>({x:pad.l+(points.length===1?0.5:i/(points.length-1))*plotW,y:pad.t+(hi-num(p.balance))/(hi-lo)*plotH}));
- ctx.strokeStyle="#54d6a0";ctx.lineWidth=2.5;ctx.beginPath();xy.forEach((p,i)=>i?ctx.lineTo(p.x,p.y):ctx.moveTo(p.x,p.y));ctx.stroke();
- const last=points[points.length-1];put("curveSummary",Math.max(0,points.length-1)+" settled trades · latest balance "+money(last.balance)+" · realized P/L "+money(last.profit));
- ctx.fillStyle="#9aabc0";ctx.fillText(points[0].label||"Start",pad.l,height-7);const endLabel=points[points.length-1].label||"Latest";ctx.fillText(endLabel,Math.max(pad.l,width-pad.r-ctx.measureText(endLabel).width),height-7);
-}
-
-function bioText(id,value){const n=document.getElementById(id);if(n)n.textContent=value}
-function bioTime(v){if(!v)return "—";const d=new Date(v);return isNaN(d)?String(v):d.toLocaleString()}
-async function refreshBiologicalReservoir(){
- const badge=document.getElementById("bioStatus");
+function put(id,value){const n=el(id);if(n)n.textContent=value}
+function fmtTime(v){if(!v)return "—";const d=new Date(v);return isNaN(d)?String(v):d.toLocaleString("en-US",{timeZone:"America/New_York"})}
+function clock(){put("clock",new Intl.DateTimeFormat("en-US",{timeZone:"America/New_York",hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:true}).format(new Date())+" ET")}
+async function refreshReservoir(){
+ const badge=el("bioStatus");
  try{
   const r=await fetch("/api/biological-reservoir?ts="+Date.now(),{cache:"no-store"});
   const d=await r.json();
   if(!r.ok)throw new Error(d.message||("HTTP "+r.status));
   const m=d.model||{},o=d.observations||{};
-  bioText("bioStatus",d.status||"INITIALIZING");if(badge)badge.className="badge "+(["WORKING","RECENT ACTIVITY","RECORDING"].includes(d.status)?"good":["STALE","ERROR","NOT CONNECTED"].includes(d.status)?"bad":"warn");
-  bioText("bioNodes",m.node_count??0);bioText("bioEdges",m.edge_count??0);bioText("bioSnapshot","Latest snapshot: "+(o.latest_snapshot_id??m.last_snapshot_id??"—"));
-  bioText("bioGraph",(m.model_version==null?"—":"v"+m.model_version)+" · "+(m.graph_snapshot||"graph pending"));
-  bioText("bioObservations",o.total??0);bioText("bioLearning",o.learning_updates??m.learning_updates??0);
-  bioText("bioUpdated","Latest: "+bioTime(o.latest_at||m.updated_at));
-  bioText("bioAccuracy","Resolved accuracy: "+(o.accuracy_pct==null?"—":Number(o.accuracy_pct).toFixed(2)+"%")+" · "+(o.settled??0)+" resolved");
-  bioText("bioBrier",(o.brier_score==null?"—":Number(o.brier_score).toFixed(5))+" / "+(o.market_brier_score==null?"—":Number(o.market_brier_score).toFixed(5)));
-  bioText("bioExpansion","Last graph expansion: "+bioTime(m.last_expansion_at));
-  bioText("bioMessage",d.message||"Telemetry loaded from persistent reservoir tables.");
-  const body=document.getElementById("bioRows");body.replaceChildren();
-  const recent=Array.isArray(d.recent)?d.recent:[];
-  if(!recent.length){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=9;td.className="empty";td.textContent="No reservoir observations recorded yet";tr.appendChild(td);body.appendChild(tr)}
-  recent.forEach(x=>{const tr=document.createElement("tr");const vals=[bioTime(x.captured_at),x.checkpoint||"continuous",x.market_slug||"—",x.forecast_direction||"—",x.probability_up==null?"—":(100*Number(x.probability_up)).toFixed(1)+"%",x.market_midpoint==null?"—":Number(x.market_midpoint).toFixed(4),x.outcome||"PENDING",x.brier_score==null?"—":Number(x.brier_score).toFixed(5),x.learning_update_applied?"YES":"—"];vals.forEach(v=>{const td=document.createElement("td");td.textContent=String(v);tr.appendChild(td)});body.appendChild(tr)});
- }catch(e){if(badge){badge.textContent="NOT CONNECTED";badge.className="badge bad"}bioText("bioMessage","Reservoir telemetry unavailable: "+String(e.message||e)+". Configure CONNECTOME_DATABASE_URL on this dashboard service to the same paid Postgres used by the reservoir worker.");}
+  put("bioStatus",d.status||"INITIALIZING");
+  if(badge)badge.className="badge "+(["WORKING","RECENT ACTIVITY","RECORDING"].includes(d.status)?"good":["STALE","ERROR","NOT CONNECTED"].includes(d.status)?"bad":"warn");
+  put("bioNodes",m.node_count??0);put("bioEdges",m.edge_count??0);
+  put("bioSnapshot","Latest snapshot: "+(o.latest_snapshot_id??m.last_snapshot_id??"—"));
+  put("bioGraph",(m.model_version==null?"—":"v"+m.model_version)+" · "+(m.graph_snapshot||"graph pending"));
+  put("bioObservations",o.total??0);put("bioLearning",o.learning_updates??m.learning_updates??0);
+  put("bioUpdated","Latest: "+fmtTime(o.latest_at||m.updated_at));
+  put("bioAccuracy","Resolved accuracy: "+(o.accuracy_pct==null?"—":Number(o.accuracy_pct).toFixed(2)+"%")+" · "+(o.settled??0)+" resolved");
+  put("bioBrier",(o.brier_score==null?"—":Number(o.brier_score).toFixed(5))+" / "+(o.market_brier_score==null?"—":Number(o.market_brier_score).toFixed(5)));
+  put("bioExpansion","Last graph expansion: "+fmtTime(m.last_expansion_at));
+  put("bioMessage",d.message||"Telemetry loaded from persistent reservoir tables.");
+  const body=el("bioRows");body.replaceChildren();const rows=Array.isArray(d.recent)?d.recent:[];
+  if(!rows.length){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=9;td.className="empty";td.textContent="No reservoir observations recorded yet";tr.appendChild(td);body.appendChild(tr)}
+  rows.forEach(x=>{const tr=document.createElement("tr");const vals=[fmtTime(x.captured_at),x.checkpoint||"continuous",x.market_slug||"—",x.forecast_direction||"—",x.probability_up==null?"—":(100*Number(x.probability_up)).toFixed(1)+"%",x.market_midpoint==null?"—":Number(x.market_midpoint).toFixed(4),x.outcome||"PENDING",x.brier_score==null?"—":Number(x.brier_score).toFixed(5),x.learning_update_applied?"YES":"—"];vals.forEach(v=>{const td=document.createElement("td");td.textContent=String(v);tr.appendChild(td)});body.appendChild(tr)});
+  put("refreshTime","Last refreshed "+new Date().toLocaleTimeString("en-US",{timeZone:"America/New_York"})+" ET");
+ }catch(e){
+  if(badge){badge.textContent="NOT CONNECTED";badge.className="badge bad"}
+  put("bioMessage","Reservoir telemetry unavailable: "+String(e.message||e)+". Check CONNECTOME_DATABASE_URL on this dashboard service.");
+  put("refreshTime","Refresh failed · "+new Date().toLocaleTimeString("en-US",{timeZone:"America/New_York"})+" ET");
+ }
 }
-
-function paintPolymarketQuotes(quotes,forecasts){
- const body=el("polymarketQuoteRows");if(!body)return;body.replaceChildren();
- const horizons=[["15m","polymarket"],["1h","polymarket_1h"]];
- horizons.forEach(([label,key])=>{
-  const q=quotes[key],f=forecasts[label],tr=document.createElement("tr");
-  const close=q&&num(q.end_time)!==null?new Date(num(q.end_time)*1000).toLocaleString("en-US",{timeZone:"America/New_York",month:"2-digit",day:"2-digit",year:"numeric",hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:true}):"—";
-  const remaining=q?duration(q.remaining_seconds):"—";
-  const forecastMatches=!!(q&&f&&f.market_id===q.market_id);
-  const vals=[label,q?(String(q.market_id||"—")+" · "+close):"Not currently detected",
-   q?pct(q.bid):"—",q?pct(q.ask):"—",q?pct(q.midpoint):"—",
-   q&&q.refresh_changes&&num(q.refresh_changes.midpoint_change_refresh)!==null?pct(q.refresh_changes.midpoint_change_refresh):"—",
-   q&&num(q.depth_imbalance)!==null?pct(q.depth_imbalance):"Unavailable",
-   q&&num(q.bid_depth)!==null?Number(q.bid_depth).toFixed(2):"—",
-   q&&num(q.ask_depth)!==null?Number(q.ask_depth).toFixed(2):"—",
-   forecastMatches?pct(f.analysis_up_probability):"—",
-   forecastMatches?String(f.analysis_direction):"Awaiting snapshot",remaining];
-  vals.forEach(v=>{const td=document.createElement("td");td.textContent=String(v);tr.appendChild(td)});body.appendChild(tr);
- });
-}
-async function refresh(){
- try{
-  const response=await fetch("/api/status?ts="+Date.now(),{cache:"no-store"});if(!response.ok)throw new Error("Status endpoint returned HTTP "+response.status);
-  const d=await response.json(),s=d.stats||{},p=d.performance||{},prices=d.latest_prices||{},sp=d.price_spreads||{};
-  paintPolymarketQuotes(d.latest_polymarket_quotes||{},d.latest_analysis_forecasts||{});
-  el("error").style.display="none";put("balance","DISABLED");put("profit","—");
-  put("todayProfit","Settled P/L only");put("tradesCount","DISABLED");
-  put("winRate","Forecast-only phase · no positions opened");
-  put("opportunities",num(s.opportunities_detected)??0);put("scanCount",num(d.scan_count)??0);put("uptime","Uptime: "+duration(s.uptime));
-  window._lastEquityCurve=Array.isArray(d.equity_curve)?d.equity_curve:[];drawProfitCurve(window._lastEquityCurve);paintConnectomes(d.connectomes||{});
-  put("mode",String(d.mode??"paper").toUpperCase());put("avgProfit","Disabled");put("bestTrade","Disabled");put("worstTrade","Disabled");
-  put("binance",price(prices.binance));put("coinbase",price(prices.coinbase));put("kraken",price(prices.kraken));
-  put("bcSpread","vs Coinbase: "+pct(sp["binance-coinbase"]));put("ckSpread","vs Kraken: "+pct(sp["coinbase-kraken"]));put("bkSpread","vs Binance: "+pct(sp["binance-kraken"]));
-  const running=!!d.bot_running;put("runningBadge",running?"BOT RUNNING":"BOT STOPPED");el("runningBadge").className="badge "+(running?"good":"bad");
-  put("updated","Updated "+new Date().toLocaleTimeString());paintTrades(Array.isArray(d.recent_trades)?d.recent_trades:[]);
-  if(d.bot_error){el("error").textContent="Bot error: "+d.bot_error;el("error").style.display="block"}
- }catch(e){el("error").textContent="Unable to refresh dashboard data: "+String(e);el("error").style.display="block";put("updated","Refresh failed")}
-}
-function updateDashboardClock(){const n=document.getElementById("dashboardClock");if(n)n.textContent=new Intl.DateTimeFormat("en-US",{timeZone:"America/New_York",hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:true}).format(new Date())+" ET"}
-window.addEventListener("resize",()=>{if(window._lastEquityCurve)drawProfitCurve(window._lastEquityCurve)});
-updateDashboardClock();setInterval(updateDashboardClock,1000);
-refresh();refreshBiologicalReservoir();setInterval(refresh,5000);setInterval(refreshBiologicalReservoir,10000);
+clock();setInterval(clock,1000);refreshReservoir();setInterval(refreshReservoir,10000);
 </script></body></html>"""
-
 
 
 @app.get("/api/biological-reservoir")
@@ -450,55 +168,5 @@ def health():
     return jsonify({"ok": True, "live_trading": False})
 
 
-@app.get("/api/status")
-def status():
-    _ensure_bot()
-    if bot is None:
-        return jsonify({
-            "mode": "paper", "live_trading": False, "bot_running": False,
-            "bot_error": bot_error, "recent_trades": [], "connectomes": {},
-            "scan_count": 0,
-        })
-    try:
-        data = bot.get_status()
-        data["bot_running"] = any(t.name == "forked-paper-bot" and t.is_alive() for t in threading.enumerate())
-        data["bot_error"] = bot_error
-        data["live_trading"] = False
-        data["scan_count"] = int(getattr(bot.market_monitor, "scan_count", 0))
-        settled = sorted(
-            (t for t in bot.trade_executor.trades if t.resolved and t.profit_loss is not None),
-            key=lambda t: (t.executed_at or t.opportunity.timestamp),
-        )
-        cumulative = 0.0
-        equity_curve = [{"label": "Start", "balance": 10000.0, "profit": 0.0}]
-        for trade in settled:
-            cumulative += float(trade.profit_loss)
-            equity_curve.append({
-                "label": datetime.fromtimestamp(trade.executed_at or trade.opportunity.timestamp).strftime("%m/%d %H:%M"),
-                "balance": 10000.0 + cumulative,
-                "profit": cumulative,
-            })
-        data["equity_curve"] = equity_curve
-        data["recent_trades"] = [
-            {
-                "id": t.id, "action": t.action, "amount_usd": t.amount, "status": t.status.value,
-                "profit_loss_usd": t.profit_loss, "confidence": getattr(t.opportunity, "confidence", None),
-                "direction": getattr(t.opportunity, "direction", None), "exchange_moved": getattr(t.opportunity, "exchange_moved", None),
-                "market_id": t.market_id, "market_question": getattr(t.opportunity, "market_question", None),
-                "executed_at": t.executed_at, "timestamp": t.executed_at or getattr(t.opportunity, "timestamp", None),
-                "entry_price": t.executed_price, "shares": t.shares, "resolved": t.resolved, "notes": t.notes,
-            }
-            for t in bot.trade_executor.get_recent_trades(20)
-        ]
-        return jsonify(data)
-    except Exception as exc:
-        logging.exception("Status endpoint failed")
-        return jsonify({
-            "mode": "paper", "live_trading": False, "bot_running": False,
-            "bot_error": str(exc), "recent_trades": [], "connectomes": {},
-        }), 500
-
-
 if __name__ == "__main__":
-    _ensure_bot()
     app.run(host="0.0.0.0", port=int(os.getenv("PORT", "10000")))
