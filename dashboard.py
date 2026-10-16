@@ -240,7 +240,7 @@ def verified_contracts():
                        avg(brier_score) FILTER (WHERE brier_score IS NOT NULL) AS mean_brier,
                        max(NULLIF(details->>'settled_at','')::timestamptz) AS last_verified_at
                 FROM biological_reservoir_observations
-                WHERE outcome IN ('UP','DOWN') AND details ? 'settlement_source'
+                WHERE outcome IN ('UP','DOWN') AND details->>'outcome_verified'='true' AND details ? 'settlement_source'
             """).fetchone()
             rows = conn.execute("""
                 SELECT o.market_slug, o.captured_at, o.checkpoint, o.forecast_direction,
@@ -250,7 +250,7 @@ def verified_contracts():
                        o.details->>'contract_timeframe' AS timeframe,
                        (upper(o.forecast_direction)=upper(o.outcome)) AS correct
                 FROM biological_reservoir_observations o
-                WHERE o.outcome IN ('UP','DOWN') AND o.details ? 'settlement_source'
+                WHERE o.outcome IN ('UP','DOWN') AND o.details->>'outcome_verified'='true' AND o.details ? 'settlement_source'
                 ORDER BY NULLIF(o.details->>'settled_at','')::timestamptz DESC NULLS LAST,
                          o.captured_at DESC
                 LIMIT 200
