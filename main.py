@@ -582,21 +582,20 @@ class TradingBot:
         candidate_now = time.time()
         timing_by_graph = {key: entry_timing[key] for key in ("decision", "research", "analysis")}
         readiness_by_graph = {key: readiness[key] for key in ("decision", "research", "analysis")}
+        # One shared registry and one persistence write per refresh window; all three
+        # Connectomes contribute candidates to the same global top-five ranking.
+        cached_profiles = self._candidate_profile_cache.get("global")
+        if cached_profiles is None or candidate_now - cached_profiles["at"] >= 300.0:
+            try:
+                profile = persist_candidate_profiles(self.decision_connectome, timing_by_graph, readiness_by_graph)
+            except Exception as exc:
+                logger.exception("CONNECTOME_CANDIDATE_PROFILE_FAILED")
+                profile = {"top_five": [], "profile_persistence": "FAILED",
+                           "live_trading_enabled": False, "error": str(exc)}
+            self._candidate_profile_cache["global"] = {"at": candidate_now, "data": profile}
+        global_candidates = self._candidate_profile_cache["global"]["data"]
         for graph_key, graph in graph_items:
-            cached = self._candidate_profile_cache.get(graph_key)
-            if cached is None or candidate_now - cached["at"] >= 300.0:
-                try:
-                    profile = persist_candidate_profiles(graph, timing_by_graph, readiness_by_graph)
-                except Exception as exc:
-                    logger.exception("CONNECTOME_CANDIDATE_PROFILE_FAILED graph=%s", graph_key)
-                    profile = {"top_five": [], "profile_persistence": "FAILED",
-                               "live_trading_enabled": False, "error": str(exc)}
-                self._candidate_profile_cache[graph_key] = {"at": candidate_now, "data": profile}
-            candidate_profiles[graph_key] = self._candidate_profile_cache[graph_key]["data"]
-        # Candidate profiles are shared across the three graphs. Use the first graph's
-        # saved registry result for the global top-five list, with per-graph profiles
-        # still available independently in each Connectome payload.
-        global_candidates = candidate_profiles.get("decision") or {}
+            candidate_profiles[graph_key] = global_candidates
         return {
             "uptime_hours": (time.time() - self.stats["start_time"]) / 3600,
             "mode": "paper",
