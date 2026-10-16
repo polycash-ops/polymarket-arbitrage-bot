@@ -157,6 +157,20 @@ def status(graph):
     """Return persisted run count and latest evaluation for the dashboard."""
     try:
         with graph._pg_connect() as pg:
+            # Older deployments may already have model_runs without the per-graph
+            # discriminator. Add it before querying so dashboard polling cannot
+            # repeatedly fail while waiting for a new training run.
+            pg.execute("""
+                CREATE TABLE IF NOT EXISTS model_runs (
+                    id BIGSERIAL PRIMARY KEY, started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+                    finished_at TIMESTAMPTZ, model_version INTEGER NOT NULL DEFAULT 1,
+                    node_count BIGINT NOT NULL DEFAULT 0, edge_count BIGINT NOT NULL DEFAULT 0,
+                    updates BIGINT NOT NULL DEFAULT 0, changed_edges BIGINT NOT NULL DEFAULT 0,
+                    accepted BOOLEAN, baseline_brier DOUBLE PRECISION, candidate_brier DOUBLE PRECISION,
+                    details JSONB NOT NULL DEFAULT '{}'::jsonb, graph_name TEXT
+                )
+            """)
+            pg.execute("ALTER TABLE model_runs ADD COLUMN IF NOT EXISTS graph_name TEXT")
             count = pg.execute("SELECT COUNT(*) FROM model_runs WHERE graph_name=%s", (graph.name,)).fetchone()[0]
             row = pg.execute(
                 "SELECT started_at,finished_at,model_version,node_count,edge_count,updates,changed_edges,"
