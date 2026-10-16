@@ -202,7 +202,7 @@ function paintConnectomes(graphs){
  const candidateBody=el("candidateProfileRows");
   if(candidateBody){
    candidateBody.replaceChildren();
-   const registry=d.candidate_profiles||{},candidates=Array.isArray(registry.top_five)?registry.top_five:[];
+   const registry=(graphs&&graphs.decision&&graphs.decision.candidate_profiles)||{},candidates=Array.isArray(registry.top_five)?registry.top_five:[];
    candidates.forEach((candidate)=>{
     const m=candidate.metrics||{},settings=candidate.settings||{},readiness=candidate.readiness||{};
     const tr=document.createElement("tr");
