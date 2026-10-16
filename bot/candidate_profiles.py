@@ -21,6 +21,19 @@ MIN_CONTRACTS_FOR_RANKING = 30
 MIN_CONTRACTS_FOR_READINESS = 100
 
 
+def _candidate_identity(graph_key, bucket):
+    """Return a stable, versioned ID for a strategy candidate."""
+    slug = str(bucket).strip().lower().replace(" ", "_").replace("-", "_")
+    return f"{graph_key}:entry_{slug}:v1"
+
+
+def _display_name(graph_key, bucket):
+    graph = GRAPH_LABELS.get(graph_key, graph_key.title())
+    labels = {"first_seen": "First Seen", "10m": "10-Minute Entry", "5m": "5-Minute Entry",
+              "3m": "3-Minute Entry", "1m": "1-Minute Entry"}
+    return f"{graph} — {labels.get(bucket, str(bucket).replace('_', ' ').title())}"
+
+
 def _bucket_settings(bucket):
     fixed = {"first_seen": None, "10m": 600, "5m": 300, "3m": 180, "1m": 60}
     if bucket in fixed:
@@ -59,7 +72,9 @@ def persist_with_graph(graph, entry_timing_by_graph, readiness_by_graph=None):
             ret = metric.get("mean_return_per_dollar")
             eligible = n >= MIN_CONTRACTS_FOR_RANKING and ret is not None
             candidate = {
-                "candidate_id": f"{graph_key}:{bucket}",
+                "candidate_id": _candidate_identity(graph_key, bucket),
+                "display_name": _display_name(graph_key, bucket),
+                "strategy_version": 1,
                 "graph_key": graph_key,
                 "graph_name": GRAPH_LABELS[graph_key],
                 "strategy_type": "contract_entry_timing",
@@ -116,6 +131,34 @@ def persist_with_graph(graph, entry_timing_by_graph, readiness_by_graph=None):
                     captured_at TIMESTAMPTZ NOT NULL
                 )
             """)
+            # Migrate legacy graph:bucket IDs to stable versioned IDs without losing history.
+            for graph_key in GRAPH_LABELS:
+                legacy_rows = pg.execute(
+                    "SELECT candidate_id, profile_json FROM connectome_candidate_profiles WHERE graph_key=%s",
+                    (graph_key,)
+                ).fetchall()
+                for legacy_id, legacy_json in legacy_rows:
+                    legacy_profile = legacy_json if isinstance(legacy_json, dict) else json.loads(legacy_json or "{}")
+                    legacy_bucket = (legacy_profile.get("settings") or {}).get("entry_timing_bucket")
+                    if not legacy_bucket:
+                        continue
+                    stable_id = _candidate_identity(graph_key, legacy_bucket)
+                    if legacy_id == stable_id:
+                        continue
+                    legacy_profile["candidate_id"] = stable_id
+                    legacy_profile["display_name"] = _display_name(graph_key, legacy_bucket)
+                    legacy_profile["strategy_version"] = 1
+                    pg.execute(
+                        "INSERT INTO connectome_candidate_profiles (candidate_id,graph_key,strategy_type,rank,status,profile_json,updated_at) VALUES (%s,%s,%s,%s,%s,%s::jsonb,%s) ON CONFLICT (candidate_id) DO NOTHING",
+                        (stable_id, graph_key, legacy_profile.get("strategy_type", "contract_entry_timing"),
+                         legacy_profile.get("rank"), legacy_profile.get("status", "COLLECTING_DATA"),
+                         json.dumps(legacy_profile), now)
+                    )
+                    pg.execute(
+                        "UPDATE connectome_candidate_profile_history SET candidate_id=%s WHERE candidate_id=%s",
+                        (stable_id, legacy_id)
+                    )
+                    pg.execute("DELETE FROM connectome_candidate_profiles WHERE candidate_id=%s", (legacy_id,))
             # Refresh all current profiles, preserving a single current row per candidate.
             for candidate in candidates:
                 pg.execute("""
