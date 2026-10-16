@@ -95,6 +95,11 @@ h1{font-size:clamp(1.5rem,4vw,2.2rem);line-height:1.15;margin:0 0 8px;letter-spa
  <div class="table-wrap"><table><thead><tr><th>Graph</th><th>Saved runs</th><th>Latest run (UTC)</th><th>Validation samples</th><th>Market baseline Brier</th><th>Candidate Brier</th><th>Changed edges</th><th>Result</th></tr></thead><tbody id="trainingRows"><tr><td colspan="8" class="empty">Waiting for persisted training runs</td></tr></tbody></table></div>
 </div></section>
 <section class="section panel"><div class="panel-inner">
+ <div class="section-head"><h2>Top 5 Research Candidates · Persistent Profiles</h2><span class="small" id="candidateProfileSummary">Waiting for candidate registry…</span></div>
+ <p class="small">The shortlist refreshes from settled quote snapshots and saves each candidate’s profile/settings and metric history to PostgreSQL. Rankings are research-only: estimated returns exclude fees, slippage, latency, and verified fills. Profiles are updated as evidence changes, but these settings are not automatically applied to execution.</p>
+ <div class="table-wrap"><table><thead><tr><th>Rank</th><th>Candidate / Connectome</th><th>Status</th><th>Entry checkpoint</th><th>Settled contracts</th><th>Forecast accuracy</th><th>Brier</th><th>Estimated return / $1</th><th>Positive-return rate</th><th>Readiness</th><th>Profile updated</th></tr></thead><tbody id="candidateProfileRows"><tr><td colspan="11" class="empty">Waiting for candidate profiles</td></tr></tbody></table></div>
+</div></section>
+<section class="section panel"><div class="panel-inner">
  <div class="section-head"><h2>Independent Live-Trading Readiness Model</h2><span class="small" id="readinessSummary">Waiting for saved readiness audits…</span></div>
  <p class="small">A separate auditor evaluates each Connectome against the requested targets. Forecast win rate is not a trading win rate. Daily/monthly returns, drawdown, and trades/day require an authoritative realized-trade ledger; they are not inferred from quote simulations. This report never enables live trading.</p>
  <div class="table-wrap"><table><thead><tr><th>Connectome</th><th>Overall readiness</th><th>Settled contracts</th><th>Forecast win rate</th><th>Forecast Brier</th><th>Market Brier</th><th>Daily return target 3.2%</th><th>Monthly return target 140%</th><th>Max drawdown under 5%</th><th>Trades/day target 240</th><th>Candidate applied</th></tr></thead><tbody id="readinessRows"><tr><td colspan="11" class="empty">Waiting for readiness reports</td></tr></tbody></table></div>
@@ -194,7 +199,31 @@ function paintConnectomes(graphs){
   });
   put("trainingSummary",runs+" saved walk-forward runs across three graphs");
  }
- const readinessBody=el("readinessRows"),gateBody=el("readinessGateRows");
+ const candidateBody=el("candidateProfileRows");
+  if(candidateBody){
+   candidateBody.replaceChildren();
+   const registry=d.candidate_profiles||{},candidates=Array.isArray(registry.top_five)?registry.top_five:[];
+   candidates.forEach((candidate)=>{
+    const m=candidate.metrics||{},settings=candidate.settings||{},readiness=candidate.readiness||{};
+    const tr=document.createElement("tr");
+    const updated=candidate.profile_updated_at?new Date(candidate.profile_updated_at).toLocaleString():"—";
+    const seconds=num(settings.target_seconds_to_contract_close);
+    const checkpoint=seconds===null?(settings.entry_timing_bucket||"first seen"):Math.floor(seconds/60)+"m to close";
+    const vals=[candidate.rank??"—",(candidate.graph_name||candidate.graph_key||"Connectome")+" · "+(settings.entry_timing_bucket||candidate.candidate_id||"candidate"),
+      String(candidate.status||"COLLECTING_DATA").replaceAll("_"," "),checkpoint,
+      fmt(m.settled_contracts||0),m.accuracy===null||m.accuracy===undefined?"—":pct(m.accuracy),
+      num(m.brier)===null?"—":Number(m.brier).toFixed(4),
+      num(m.estimated_return_per_dollar)===null?"—":pct(m.estimated_return_per_dollar),
+      num(m.positive_return_rate)===null?"—":pct(m.positive_return_rate),
+      String(readiness.overall_status||"NOT_READY").replaceAll("_"," "),updated];
+    vals.forEach((v,i)=>{const td=document.createElement("td");td.textContent=String(v);if(i===0||i===2)td.style.fontWeight="700";tr.appendChild(td)});
+    candidateBody.appendChild(tr);
+   });
+   if(!candidates.length){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=11;td.className="empty";td.textContent="No candidate profiles saved yet; waiting for settled bucket metrics.";tr.appendChild(td);candidateBody.appendChild(tr)}
+   const persistence=registry.profile_persistence||"UNKNOWN";
+   put("candidateProfileSummary",candidates.length+" shortlisted · profile DB "+String(persistence).replaceAll("_"," ").toLowerCase()+" · refreshed "+(registry.updated_at?new Date(registry.updated_at).toLocaleTimeString():"not yet"));
+  }
+  const readinessBody=el("readinessRows"),gateBody=el("readinessGateRows");
   const readinessNames=[["decision","Decision"],["research","Research"],["analysis","Analysis"]];
   let readyReports=0,gateCount=0;
   if(readinessBody&&gateBody){
