@@ -246,7 +246,7 @@ def verified_contracts():
             rows = conn.execute("""
                 SELECT o.market_slug, o.captured_at, o.checkpoint, o.forecast_direction,
                        o.probability_up, o.outcome, o.brier_score, o.learning_update_applied,
-                       o.details->'learning_update'->>'learning_applied_at' AS learning_applied_at,
+                       o.details->>'learning_applied_at' AS learning_applied_at,
                        NULLIF(o.details->>'reservoir_model_version', '')::integer AS model_version,
                        o.details->>'settlement_source' AS settlement_source,
                        NULLIF(o.details->>'settled_at','')::timestamptz AS verified_at,
