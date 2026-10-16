@@ -208,8 +208,11 @@ function paintConnectomes(graphs){
     const tr=document.createElement("tr");
     const updated=candidate.profile_updated_at?new Date(candidate.profile_updated_at).toLocaleString():"—";
     const seconds=num(settings.target_seconds_to_contract_close);
-    const checkpoint=seconds===null?(settings.entry_timing_bucket||"first seen"):Math.floor(seconds/60)+"m to close";
-    const vals=[candidate.rank??"—",(candidate.graph_name||candidate.graph_key||"Connectome")+" · "+(settings.entry_timing_bucket||candidate.candidate_id||"candidate"),
+    const checkpoint=settings.checkpoint?settings.checkpoint+" checkpoint":(seconds===null?(settings.entry_timing_bucket||"first seen"):Math.floor(seconds/60)+"m to close");
+    const combo=Array.isArray(settings.feature_combination)?settings.feature_combination.map(x=>String(x.name)+"="+String(x.value)).join(" + "):"";
+    const candidateLabel=candidate.display_name||((candidate.graph_name||candidate.graph_key||"Connectome")+" · "+(settings.entry_timing_bucket||candidate.candidate_id||"candidate"));
+    const detail=(candidate.strategy_type==="checkpoint_signal_combination"?"COMBO · ":"TIMING · ")+candidateLabel+(combo?" · "+combo:"");
+    const vals=[candidate.rank??"—",detail,
       String(candidate.status||"COLLECTING_DATA").replaceAll("_"," "),checkpoint,
       fmt(m.settled_contracts||0),m.accuracy===null||m.accuracy===undefined?"—":pct(m.accuracy),
       num(m.brier)===null?"—":Number(m.brier).toFixed(4),
