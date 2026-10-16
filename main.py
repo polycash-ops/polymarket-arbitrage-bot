@@ -18,6 +18,7 @@ from bot.trade_executor import Trade, TradeExecutor
 from bot.walk_forward import run_if_due as run_walk_forward_if_due, status as walk_forward_status
 from bot.entry_timing import summarize as summarize_entry_timing
 from bot.readiness_model import build_report as build_readiness_report
+from bot.candidate_profiles import persist_with_graph as persist_candidate_profiles
 
 Path("logs").mkdir(parents=True, exist_ok=True)
 logging.basicConfig(
@@ -47,6 +48,7 @@ class TradingBot:
         self.latest_analysis_forecasts = {}
         self._entry_timing_cache = {}
         self._readiness_cache = {}
+        self._candidate_profile_cache = {}
         self.last_connectome_snapshot_at = {}
         self.last_connectome_remaining = {}
         self.stats = {
@@ -576,6 +578,25 @@ class TradingBot:
                               "live_trading_enabled": False, "error": str(exc)}
                 self._readiness_cache[graph_key] = {"at": readiness_now, "data": report}
             readiness[graph_key] = self._readiness_cache[graph_key]["data"]
+        candidate_profiles = {}
+        candidate_now = time.time()
+        timing_by_graph = {key: entry_timing[key] for key in ("decision", "research", "analysis")}
+        readiness_by_graph = {key: readiness[key] for key in ("decision", "research", "analysis")}
+        for graph_key, graph in graph_items:
+            cached = self._candidate_profile_cache.get(graph_key)
+            if cached is None or candidate_now - cached["at"] >= 300.0:
+                try:
+                    profile = persist_candidate_profiles(graph, timing_by_graph, readiness_by_graph)
+                except Exception as exc:
+                    logger.exception("CONNECTOME_CANDIDATE_PROFILE_FAILED graph=%s", graph_key)
+                    profile = {"top_five": [], "profile_persistence": "FAILED",
+                               "live_trading_enabled": False, "error": str(exc)}
+                self._candidate_profile_cache[graph_key] = {"at": candidate_now, "data": profile}
+            candidate_profiles[graph_key] = self._candidate_profile_cache[graph_key]["data"]
+        # Candidate profiles are shared across the three graphs. Use the first graph's
+        # saved registry result for the global top-five list, with per-graph profiles
+        # still available independently in each Connectome payload.
+        global_candidates = candidate_profiles.get("decision") or {}
         return {
             "uptime_hours": (time.time() - self.stats["start_time"]) / 3600,
             "mode": "paper",
@@ -605,11 +626,12 @@ class TradingBot:
             "latest_analysis_forecasts": self.latest_analysis_forecasts,
             "price_spreads": self.market_monitor.get_price_spread(),
             "connectomes": {
-                "decision": {**self.decision_connectome.stats(), "training": training_statuses["decision"], "entry_timing": entry_timing["decision"], "readiness": readiness["decision"]},
-                "research": {**self.research_connectome.stats(), "training": training_statuses["research"], "entry_timing": entry_timing["research"], "readiness": readiness["research"]},
-                "analysis": {**self.analysis_connectome.stats(), "training": training_statuses["analysis"], "entry_timing": entry_timing["analysis"], "readiness": readiness["analysis"]},
+                "decision": {**self.decision_connectome.stats(), "training": training_statuses["decision"], "entry_timing": entry_timing["decision"], "readiness": readiness["decision"], "candidate_profiles": candidate_profiles["decision"]},
+                "research": {**self.research_connectome.stats(), "training": training_statuses["research"], "entry_timing": entry_timing["research"], "readiness": readiness["research"], "candidate_profiles": candidate_profiles["research"]},
+                "analysis": {**self.analysis_connectome.stats(), "training": training_statuses["analysis"], "entry_timing": entry_timing["analysis"], "readiness": readiness["analysis"], "candidate_profiles": candidate_profiles["analysis"]},
             },
             "recent_opportunities": len(self.opportunity_detector.get_recent_opportunities(60)),
+            "candidate_profiles": global_candidates,
         }
 
 
