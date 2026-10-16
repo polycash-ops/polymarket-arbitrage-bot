@@ -25,6 +25,9 @@ def run_if_due(graph, min_samples=50, interval=25):
             "AND settled_at IS NOT NULL ORDER BY observed_at ASC,event_id ASC"
         ).fetchall()
         settled_count = len(rows)
+        # Bound runtime as the snapshot archive grows while retaining a recent chronological window.
+        if len(rows) > 2500:
+            rows = rows[-2500:]
         count_row = con.execute(
             "SELECT value FROM metadata WHERE key='last_training_settled_count'"
         ).fetchone()
@@ -154,17 +157,6 @@ def status(graph):
     """Return persisted run count and latest evaluation for the dashboard."""
     try:
         with graph._pg_connect() as pg:
-            pg.execute("""
-                CREATE TABLE IF NOT EXISTS model_runs (
-                    id BIGSERIAL PRIMARY KEY, started_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-                    finished_at TIMESTAMPTZ, model_version INTEGER NOT NULL DEFAULT 1,
-                    node_count BIGINT NOT NULL DEFAULT 0, edge_count BIGINT NOT NULL DEFAULT 0,
-                    updates BIGINT NOT NULL DEFAULT 0, changed_edges BIGINT NOT NULL DEFAULT 0,
-                    accepted BOOLEAN, baseline_brier DOUBLE PRECISION, candidate_brier DOUBLE PRECISION,
-                    details JSONB NOT NULL DEFAULT '{}'::jsonb, graph_name TEXT
-                )
-            """)
-            pg.execute("ALTER TABLE model_runs ADD COLUMN IF NOT EXISTS graph_name TEXT")
             count = pg.execute("SELECT COUNT(*) FROM model_runs WHERE graph_name=%s", (graph.name,)).fetchone()[0]
             row = pg.execute(
                 "SELECT started_at,finished_at,model_version,node_count,edge_count,updates,changed_edges,"
