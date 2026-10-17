@@ -40,6 +40,7 @@ from reservoir_consumer import (
     normalize_contract_price_series,
     outcome_provenance_trusted,
 )
+from canonical_resolver import select_canonical_open_contract
 
 
 def _run_bot():
@@ -230,17 +231,45 @@ function usd(v){return v==null||!Number.isFinite(Number(v))?"—":"$"+Number(v).
 function cents(v){return v==null||!Number.isFinite(Number(v))?"—":(100*Number(v)).toFixed(2)+"¢"}
 function ageLabel(v){if(!v)return "No timestamp";const age=Math.max(0,(Date.now()-new Date(v).getTime())/1000);return age<60?"Quote age: "+Math.round(age)+"s": "Quote age: "+Math.floor(age/60)+"m "+Math.round(age%60)+"s"}
 async function refreshLiveQuotes(){
+ const generation=(window.__reservoirLiveQuoteGeneration||0)+1;window.__reservoirLiveQuoteGeneration=generation;
  try{
-  const r=await fetch("/api/live-quotes?ts="+Date.now(),{cache:"no-store"});const d=await r.json();if(!r.ok)throw new Error(d.message||("HTTP "+r.status));
+  const r=await fetch("/api/live-quotes?ts="+Date.now(),{cache:"no-store"});const d=await r.json();if(generation!==window.__reservoirLiveQuoteGeneration)return;if(!r.ok)throw new Error(d.message||("HTTP "+r.status));
   for(const [key,prefix] of [["binance","qBinance"],["coinbase","qCoinbase"],["kraken","qKraken"]]){
    const q=(d.sources||{})[key]||{};put(prefix+"Price",usd(q.price));put(prefix+"Bid",usd(q.bid));put(prefix+"Ask",usd(q.ask));
    put(prefix+"Time","Received: "+fmtTime(q.received_at));put(prefix+"Age",q.error?"Unavailable: "+q.error:ageLabel(q.received_at));
   }
-  const p=d.polymarket||{};put("polyContract",p.slug||"No active 15m BTC contract found");put("polyQuestion",p.question||"");put("polyWindow",(p.start_at||p.end_at)?"Contract window: "+fmtTime(p.start_at)+" – "+fmtTime(p.end_at):"Contract window: —");
-  const upPct=p.midpoint==null?null:Math.max(0,Math.min(100,100*Number(p.midpoint)));put("polyUpPct",upPct==null?"—":upPct.toFixed(1)+"%");put("polyDownPct",upPct==null?"—":(100-upPct).toFixed(1)+"%");put("polyUpBid",cents(p.bid));put("polyUpAsk",cents(p.ask));put("polyQuoteTime","Quote received: "+fmtTime(p.received_at));
-  const status=el("polyQuoteStatus");if(status){status.textContent=p.error?"QUOTE UNAVAILABLE":p.slug?"LIVE QUOTE":"NO CONTRACT";status.className="badge "+(p.error||!p.slug?"warn":"good")}
-  refreshContractPriceChart(p.slug||null);
+  const p=d.polymarket||{};
+  const cr=await fetch("/api/current-contract?ts="+Date.now(),{cache:"no-store"});const cd=await cr.json();
+  if(generation!==window.__reservoirLiveQuoteGeneration)return;
+  const canonical=cd.status==="OPEN"?cd.contract:null;
+  const previousIdentity=Object.prototype.hasOwnProperty.call(window,"__reservoirCanonicalIdentity")?window.__reservoirCanonicalIdentity:null;
+  window.__reservoirCanonicalIdentity=canonical?canonical.identity:null;
+  const identityChanged=previousIdentity!==window.__reservoirCanonicalIdentity;
+  if(identityChanged){
+    bumpAlertGeneration();
+    activeAlertState={contractIdentity:null,annotations:[]};
+    lastPriceSeries=null;
+    const alertList=el("alertAnnotationList");if(alertList)alertList.replaceChildren();
+    put("alertContract",canonical?canonical.identity:"No open 15m contract");
+    put("alertWindow",canonical?("start "+canonical.start_at+" · end "+canonical.end_at):"—");
+    put("alertDirection","No active UP/DOWN alert.");put("alertIssued","—");put("alertIssuanceSource","—");put("alertLifecycle","—");put("alertAnnotationCount",0);
+    put("alertMessage","Contract identity changed; old alert cleared while the current contract is checked.");
+    const alertStatus=el("alertStatus");if(alertStatus){alertStatus.textContent=canonical?"CHECKING":"NO CONTRACT";alertStatus.className="badge warn";}
+  }
+  const matches=!!canonical&&p.slug===canonical.identity;
+  put("polyContract",canonical?canonical.identity:"No canonical open 15m BTC contract");put("polyQuestion",canonical?(canonical.question||""):"");
+  put("polyWindow",canonical?"Contract window: "+fmtTime(canonical.start_at)+" – "+fmtTime(canonical.end_at):"Contract window: —");
+  const status=el("polyQuoteStatus");
+  if(!matches){put("polyUpPct","—");put("polyDownPct","—");put("polyUpBid","—");put("polyUpAsk","—");put("polyQuoteTime","Quote unavailable for canonical contract");
+    if(status){status.textContent=canonical?"CONTRACT MISMATCH":"NO CANONICAL CONTRACT";status.className="badge warn";}
+    refreshContractPriceChart(canonical?canonical.identity:null);
+  }else{
+    const upPct=p.midpoint==null?null:Math.max(0,Math.min(100,100*Number(p.midpoint)));put("polyUpPct",upPct==null?"—":upPct.toFixed(1)+"%");put("polyDownPct",upPct==null?"—":(100-upPct).toFixed(1)+"%");put("polyUpBid",cents(p.bid));put("polyUpAsk",cents(p.ask));put("polyQuoteTime","Quote received: "+fmtTime(p.received_at));
+    if(status){status.textContent=p.error?"QUOTE UNAVAILABLE":"LIVE QUOTE";status.className="badge "+(p.error?"warn":"good");}
+    refreshContractPriceChart(canonical.identity);
+  }
   const ref=d.reference||{};put("refPrice",usd(ref.price));put("refSource","Reference source: "+(ref.source||"—"));put("refTime","Timestamp: "+fmtTime(ref.received_at));put("polyRefTime","Contract start/reference time: "+fmtTime(p.start_at));
+  if(identityChanged)refreshActiveAlert();
   put("quoteRefresh","Last refreshed "+new Date().toLocaleTimeString("en-US",{timeZone:"America/New_York"})+" ET");
  }catch(e){put("quoteRefresh","Live quote refresh failed: "+String(e.message||e))}
 }
@@ -271,6 +300,10 @@ window.__reservoirAlertGeneration = window.__reservoirAlertGeneration || 0;
 function bumpAlertGeneration(){ window.__reservoirAlertGeneration += 1; return window.__reservoirAlertGeneration; }
 function applyAlertPayload(generation, d){
   if(generation !== window.__reservoirAlertGeneration){ return false; }
+  const expected=Object.prototype.hasOwnProperty.call(window,"__reservoirCanonicalIdentity")
+    ? window.__reservoirCanonicalIdentity : (priceChartSlug||null);
+  const received=d&&d.contract&&d.contract.identity||null;
+  if((d||{}).status!=="ERROR"&&received!==expected){ return false; }
   const st=el("alertStatus");
   activeAlertState={contractIdentity:(d.status==="ACTIVE"&&d.contract&&d.contract.identity)||null,annotations:(d.status==="ACTIVE"&&Array.isArray(d.graph_annotations)?d.graph_annotations:[])};
   if(lastPriceSeries)renderContractPriceChart(lastPriceSeries);
@@ -768,6 +801,41 @@ def contract_price_series():
         return jsonify({"ok": True, "status": "UNAVAILABLE_DATABASE",
                         "message": "CONNECTOME_DATABASE_URL is not configured.",
                         "contract_identity": identity, "points": []}), 503
+    contract_result = current_contract()
+    # Flask view functions may return (Response, status) on failure. When calling
+    # this view directly, normalize that shape instead of assuming a Response.
+    if isinstance(contract_result, tuple):
+        contract_response = contract_result[0]
+        try:
+            contract_status_code = int(contract_result[1]) if len(contract_result) > 1 else 200
+        except (TypeError, ValueError):
+            contract_status_code = 500
+        if contract_status_code >= 500:
+            logging.error("endpoint=contract_price_series event=query_failed")
+            return jsonify({"ok": False, "status": "UNAVAILABLE_QUERY_ERROR",
+                            "message": "Price history is temporarily unavailable; server-side query failed.",
+                            "contract_identity": identity, "points": []}), 500
+    else:
+        contract_response = contract_result
+    try:
+        contract_payload = contract_response.get_json() or {}
+    except Exception:
+        logging.error("endpoint=contract_price_series event=query_failed")
+        return jsonify({"ok": False, "status": "UNAVAILABLE_QUERY_ERROR",
+                        "message": "Price history is temporarily unavailable; server-side query failed.",
+                        "contract_identity": identity, "points": []}), 500
+    selected = contract_payload.get("contract")
+    if contract_payload.get("status") != "OPEN" or not selected or selected.get("identity") != identity:
+        return jsonify({"ok": True, "status": "UNAVAILABLE_CONTRACT_ROLLOVER",
+                        "message": "The requested series is not the canonical contract currently open.",
+                        "contract_identity": identity, "points": []})
+    selected_start = parse_aware_timestamp(selected.get("start_at"))
+    selected_end = parse_aware_timestamp(selected.get("end_at"))
+    if selected_start is None or selected_end is None:
+        return jsonify({"ok": True, "status": "UNAVAILABLE_INVALID_BOUNDARIES",
+                        "message": "Canonical contract boundaries are unavailable.",
+                        "contract_identity": identity, "points": []})
+    evaluation_time = parse_aware_timestamp(request.headers.get("X-Evaluation-Time")) or datetime.now(timezone.utc)
     try:
         import psycopg
         from psycopg.rows import dict_row
@@ -782,8 +850,8 @@ def contract_price_series():
                     SELECT id, market_slug, captured_at, midpoint, window_start, window_end
                     FROM public.snapshots
                     WHERE market_slug=%s AND timeframe='15m'
+                      AND window_start=%s AND window_end=%s
                       AND midpoint IS NOT NULL
-                      AND window_start IS NOT NULL AND window_end IS NOT NULL
                       AND window_end-window_start=INTERVAL '15 minutes'
                       AND captured_at >= window_start AND captured_at < window_end
                     ORDER BY captured_at DESC, id DESC
@@ -791,8 +859,8 @@ def contract_price_series():
                 )
                 SELECT market_slug, captured_at, midpoint, window_start, window_end
                 FROM bounded ORDER BY captured_at ASC, id ASC
-            """, (identity,)).fetchall()
-        result = normalize_contract_price_series(rows, identity, datetime.now(timezone.utc))
+            """, (identity, selected_start, selected_end)).fetchall()
+        result = normalize_contract_price_series(rows, identity, evaluation_time)
         return jsonify({"ok": True, "research_only": True, "live_trading_enabled": False, **result})
     except Exception:
         logging.error(
@@ -805,17 +873,9 @@ def contract_price_series():
 
 @app.get("/api/current-contract")
 def current_contract():
-    """
-    Resolve the exact open 15-minute contract at evaluation time T (start <= T < end).
-
-    Accepts optional JSON body via query is not used; evaluation uses server UTC now.
-    When CONNECTOME_DATABASE_URL is set, candidate windows are read from recent
-    observations' details.contract_timeline when present. Otherwise returns
-    NO_OPEN_CONTRACT with an explicit reason (producer gap / no candidates).
-    """
+    """Resolve one exact canonical BTC UP/DOWN 15m contract at T (start <= T < end)."""
     from flask import request
     now = datetime.now(timezone.utc)
-    # Optional override for deterministic tests only via header (not documented publicly)
     override = request.headers.get("X-Evaluation-Time")
     if override:
         parsed = parse_aware_timestamp(override)
@@ -824,53 +884,40 @@ def current_contract():
 
     candidates = []
     url = os.getenv("CONNECTOME_DATABASE_URL")
-    if url:
+    if not url:
+        result = {"status": "NO_OPEN_CONTRACT", "reason": "database_unavailable", "contract": None}
+    else:
         try:
             import psycopg
             from psycopg.rows import dict_row
             with psycopg.connect(url, connect_timeout=4, row_factory=dict_row) as conn:
-                exists = conn.execute(
-                    "SELECT to_regclass('public.biological_reservoir_observations') AS obs"
-                ).fetchone()
-                if exists and exists["obs"]:
-                    rows = conn.execute("""
-                        SELECT DISTINCT ON (market_slug)
-                            market_slug,
-                            details->'contract_timeline'->'current_contract' AS current_contract,
-                            details->>'contract_timeframe' AS timeframe,
-                            captured_at
-                        FROM biological_reservoir_observations
-                        WHERE market_slug IS NOT NULL
-                          AND COALESCE(details->>'fixture_key','')=''
-                          AND COALESCE(details->>'is_synthetic','false') <> 'true'
-                        ORDER BY market_slug, captured_at DESC
-                        LIMIT 50
-                    """).fetchall()
-                    for row in rows:
-                        cc = row.get("current_contract") or {}
-                        if not isinstance(cc, dict):
-                            cc = {}
-                        candidates.append({
-                            "identity": row["market_slug"],
-                            "market_slug": row["market_slug"],
-                            "start_at": cc.get("start_at") or cc.get("start") or cc.get("window_start"),
-                            "end_at": cc.get("end_at") or cc.get("end") or cc.get("window_end"),
-                            "timeframe": row.get("timeframe") or cc.get("timeframe"),
-                            "question": cc.get("question"),
-                            "source": "observation_contract_timeline",
-                        })
+                # Bounded, parameterized lookup. Metadata must identify the product;
+                # the canonical columns and assetPriceTerms window bounds must agree.
+                candidates = conn.execute("""
+                    SELECT market_slug, market_id, timeframe, title, window_start, window_end, active, metadata
+                    FROM public.market_contracts
+                    WHERE timeframe = %s AND active IS TRUE
+                      AND window_start <= %s AND %s < window_end
+                      AND window_end - window_start = INTERVAL '15 minutes'
+                      AND UPPER(COALESCE(metadata->'assetPriceTerms'->'asset'->>'symbol',''))
+                          IN ('BTC','BTCUSD','BTCUSDT','BITCOIN')
+                      AND LOWER(REGEXP_REPLACE(
+                          COALESCE(metadata->'assetPriceTerms'->>'horizon',''),
+                          '[[:space:]_]+', '', 'g')) IN ('15m','15min','15minutes')
+                      AND UPPER(COALESCE(metadata->>'marketType', metadata->>'market_type',''))
+                          IN ('ASSET_PRICE_MARKET_TYPE_UP_DOWN','UP_DOWN')
+                      AND LOWER(COALESCE(NULLIF(title,''), metadata->>'question', metadata->>'title',''))
+                          ~ '(btc|bitcoin).*(up or down|up/down|up down)'
+                    ORDER BY window_start, market_slug
+                    LIMIT 3
+                """, ('15m', now, now)).fetchall()
+            result = select_canonical_open_contract(candidates, now)
         except Exception:
-            logging.error(
-                "endpoint=current_contract event=query_failed"
-            )
-            return jsonify({
-                "ok": False,
-                "status": "ERROR",
-                "message": "Contract lookup is temporarily unavailable.",
-                "contract": None,
-            }), 500
+            logging.error("endpoint=current_contract event=query_failed")
+            return jsonify({"ok": False, "status": "ERROR",
+                            "message": "Contract lookup is temporarily unavailable.",
+                            "contract": None}), 500
 
-    result = select_open_contract(candidates, now)
     result["ok"] = result["status"] in ("OPEN", "NO_OPEN_CONTRACT")
     result["research_only"] = True
     result["live_trading_enabled"] = False
@@ -924,12 +971,14 @@ def active_alert():
                            details->>'issued_at' AS issued_at
                     FROM biological_reservoir_observations
                     WHERE market_slug = %s
+                      AND captured_at >= %s AND captured_at < %s
                       AND forecast_direction IN ('UP', 'DOWN')
                       AND COALESCE(details->>'fixture_key','')=''
                       AND COALESCE(details->>'is_synthetic','false') <> 'true'
                     ORDER BY captured_at DESC, snapshot_id DESC
                     LIMIT 50
-                """, (identity,)).fetchall()
+                """, (identity, parse_aware_timestamp(contract.get("start_at")),
+                      parse_aware_timestamp(contract.get("end_at")))).fetchall()
                 for row in rows:
                     records.append({
                         "market_slug": row["market_slug"],
