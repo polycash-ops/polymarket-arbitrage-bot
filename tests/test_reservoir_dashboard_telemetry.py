@@ -50,7 +50,7 @@ class FakeConnection:
                 "updated_at": datetime.now(timezone.utc),
                 "worker_heartbeat_at": None, "source_snapshot_at": None,
             })
-        if "WITH selected AS" in query and "AS verified" in query:
+        if "WITH selected AS" in query and "count(*) AS verified" in query:
             return FakeResult(row={"verified": self.verified_count, "correct": self.correct_count,
                                    "mean_brier": 0.2, "last_verified_at": None})
         if "WITH selected AS" in query and "AS correct" in query:
