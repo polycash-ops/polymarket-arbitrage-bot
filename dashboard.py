@@ -511,9 +511,12 @@ def biological_reservoir_status():
             "recent": recent, "signal_history": history,
             "message": ("Worker heartbeat and source freshness are separate. Missing telemetry columns are not inferred from model writes or observations. "
                         "Research/paper forecasts only; live trading is hard-blocked.")})
-    except Exception as exc:
-        logging.exception("Biological Reservoir telemetry endpoint failed")
-        return jsonify({"ok": False, "status": "ERROR", "message": type(exc).__name__ + ": " + str(exc),
+    except Exception:
+        logging.error(
+            "endpoint=reservoir_telemetry event=query_failed"
+        )
+        return jsonify({"ok": False, "status": "ERROR",
+                        "message": "Reservoir telemetry is temporarily unavailable.",
                         "model": None, "observations": {}, "recent": [], "freshness": {}}), 500
 
 
@@ -603,9 +606,12 @@ def verified_contracts():
             "scoring_policy": {"status": "UNAPPROVED", "unit": None, "forecast_selection": None},
             "contracts": rows,
         })
-    except Exception as exc:
-        logging.exception("Verified Reservoir outcomes endpoint failed")
-        return jsonify({"ok": False, "message": type(exc).__name__ + ": " + str(exc),
+    except Exception:
+        logging.error(
+            "endpoint=verified_contracts event=query_failed"
+        )
+        return jsonify({"ok": False,
+                        "message": "Verified contract data is temporarily unavailable.",
                         "metrics": {}, "contracts": []}), 500
 
 
@@ -788,8 +794,10 @@ def contract_price_series():
             """, (identity,)).fetchall()
         result = normalize_contract_price_series(rows, identity, datetime.now(timezone.utc))
         return jsonify({"ok": True, "research_only": True, "live_trading_enabled": False, **result})
-    except Exception as exc:
-        logging.exception("Exact contract price series query failed")
+    except Exception:
+        logging.error(
+            "endpoint=contract_price_series event=query_failed"
+        )
         return jsonify({"ok": False, "status": "UNAVAILABLE_QUERY_ERROR",
                         "message": "Price history is temporarily unavailable; server-side query failed.",
                         "contract_identity": identity, "points": []}), 500
@@ -851,12 +859,14 @@ def current_contract():
                             "question": cc.get("question"),
                             "source": "observation_contract_timeline",
                         })
-        except Exception as exc:
-            logging.exception("current-contract candidate load failed")
+        except Exception:
+            logging.error(
+                "endpoint=current_contract event=query_failed"
+            )
             return jsonify({
                 "ok": False,
                 "status": "ERROR",
-                "message": type(exc).__name__ + ": " + str(exc),
+                "message": "Contract lookup is temporarily unavailable.",
                 "contract": None,
             }), 500
 
@@ -931,12 +941,14 @@ def active_alert():
                         "checkpoint": row.get("checkpoint"),
                         "probability_up": row.get("probability_up"),
                     })
-        except Exception as exc:
-            logging.exception("active-alert load failed")
+        except Exception:
+            logging.error(
+                "endpoint=active_alert event=query_failed"
+            )
             return jsonify({
                 "ok": False,
                 "status": "ERROR",
-                "message": type(exc).__name__ + ": " + str(exc),
+                "message": "Active alert data is temporarily unavailable.",
                 "alert": None,
                 "graph_annotations": [],
             }), 500
@@ -1037,12 +1049,14 @@ def rolling_accuracy():
                 """).fetchall()
                 for row in rows:
                     records.append(dict(row))
-        except Exception as exc:
-            logging.exception("rolling-accuracy load failed")
+        except Exception:
+            logging.error(
+                "endpoint=rolling_accuracy event=query_failed"
+            )
             return jsonify({
                 "ok": False,
                 "status": "ERROR",
-                "message": type(exc).__name__ + ": " + str(exc),
+                "message": "Rolling accuracy data is temporarily unavailable.",
             }), 500
 
     result = compute_rolling_accuracy(records, now, policy_approved=approved)
