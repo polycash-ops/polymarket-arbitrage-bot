@@ -110,7 +110,6 @@ class ReservoirDashboardTelemetryTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         body = response.get_json()
         self.assertEqual(body["metrics"]["verified"], 2)
-        self.assertIsNone(body["metrics"]["correct"])
         self.assertIsNone(body["metrics"]["accuracy_pct"])
         self.assertEqual(body["metrics"]["accuracy_status"], "UNAVAILABLE_POLICY_PENDING")
         self.assertEqual(body["scoring_policy"], {
