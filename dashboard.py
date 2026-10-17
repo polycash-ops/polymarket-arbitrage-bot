@@ -3,7 +3,8 @@ import asyncio
 import logging
 import os
 import threading
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
+from typing import Any, Optional
 
 from flask import Flask, jsonify
 from main import TradingBot
@@ -13,6 +14,32 @@ logging.basicConfig(level=logging.INFO)
 bot = None
 bot_error = None
 lock = threading.Lock()
+
+
+# Contract metadata (consumer view):
+# VERIFIED as read by existing PR2 SQL: market_slug, captured_at, snapshot_id,
+#   forecast_direction, probability_up, outcome, checkpoint, brier_score,
+#   details.contract_timeframe, details.outcome_verified, details.settlement_source,
+#   details.settled_at, details.contract_timeline.current_contract.reference_price,
+#   details.fixture_key / is_synthetic filters.
+# PROPOSED / NOT verified against worker producer code in this session:
+#   details.issued_at, current_contract.start_at/end_at, alert_sequence.
+# REQUIRED for open-contract + active-alert panels: identity + trustworthy window
+#   bounds + issued_at. Missing bounds => NO_OPEN_CONTRACT (no guess).
+DATA_CONTRACT_NOTE = True
+
+from reservoir_consumer import (
+    SCORING_POLICY,
+    FRESHNESS_DEFAULTS,
+    parse_aware_timestamp,
+    is_15_minute_product,
+    select_open_contract,
+    select_active_up_down_alert,
+    alerts_to_graph_annotations,
+    compute_rolling_accuracy,
+    normalize_contract_price_series,
+    outcome_provenance_trusted,
+)
 
 
 def _run_bot():
@@ -84,6 +111,34 @@ h1{font-size:clamp(1.5rem,4vw,2.2rem);line-height:1.15;margin:0 0 8px;letter-spa
  </div>
 </div></section>
 <section class="section panel"><div class="panel-inner">
+ <div class="section-head"><div><h2>Active contract alert</h2><p class="small">Real worker-issued UP/DOWN for the exact open 15-minute contract only. Prior contracts never carry forward.</p></div>
+  <span class="badge warn" id="alertStatus">CHECKING</span></div>
+ <div class="grid">
+  <article class="card"><div class="metric-label">Open contract</div><div class="quote-value" id="alertContract">—</div><div class="quote-meta" id="alertWindow">Window: —</div></article>
+  <article class="card"><div class="metric-label">Active UP/DOWN alert</div><div class="quote-value" id="alertDirection">—</div><div class="quote-meta" id="alertIssued">Issued: —</div></article>
+  <article class="card"><div class="metric-label">Issuance source</div><div class="quote-value" id="alertIssuanceSource">—</div><div class="quote-meta" id="alertLifecycle">Lifecycle: —</div></article>
+  <article class="card"><div class="metric-label">Trusted graph alert markers</div><div class="quote-value" id="alertAnnotationCount">—</div><div class="quote-meta" id="alertAnnotationNote">Only timestamped, trusted issuance for the exact contract can be overlaid. Missing producer issuance remains unavailable.</div></article>
+ </div>
+ <ul id="alertAnnotationList" class="small" style="margin:0.5rem 0 0 1.25rem;padding:0"></ul>
+ <p class="small" id="alertMessage">Loading active alert…</p>
+</div></section>
+<section class="section panel"><div class="panel-inner">
+ <div class="section-head"><div><h2>Exact-contract Polymarket midpoint history</h2><p class="small">Real persisted 15-minute contract snapshots with trusted alert issuance markers when available. Contract rollover clears the prior series.</p></div><span class="badge warn" id="priceChartStatus">WAITING</span></div>
+ <p class="small" id="priceChartMessage" role="status">Waiting for the active contract and timestamped price series.</p>
+ <div id="contractPriceChart" aria-label="Polymarket UP-token midpoint over the active 15-minute contract" style="width:100%;min-height:240px;overflow:hidden"></div>
+ <p class="small" id="priceChartLegend">Line: persisted UP-token midpoint · Vertical markers: trusted issued UP/DOWN alerts for this exact contract only.</p>
+</div></section>
+<section class="section panel"><div class="panel-inner">
+ <div class="section-head"><div><h2>Rolling 24h accuracy</h2><p class="small">UP/DOWN-only proposed policy. Public values remain unavailable until explicit scoring-policy approval.</p></div>
+  <span class="badge warn" id="accuracyStatus">POLICY PENDING</span></div>
+ <div class="grid">
+  <article class="card"><div class="metric-label">Accuracy</div><div class="metric" id="accPct">—</div><div class="metric-sub" id="accMessage">Pending approval</div></article>
+  <article class="card"><div class="metric-label">Correct / Incorrect</div><div class="metric" id="accCorrect">—</div><div class="metric-sub" id="accScored">Scored: —</div></article>
+  <article class="card"><div class="metric-label">Pending / Excluded</div><div class="metric" id="accPending">—</div><div class="metric-sub" id="accExcluded">Excluded: —</div></article>
+  <article class="card"><div class="metric-label">Policy</div><div class="metric" id="accPolicyStatus">UNAPPROVED</div><div class="metric-sub" id="accPolicyId">—</div></article>
+ </div>
+</div></section>
+<section class="section panel"><div class="panel-inner">
  <div class="section-head"><div><h2>Recent reservoir observations</h2><p class="small">UP/DOWN probabilities estimate which side wins at contract expiry relative to that contract’s price to beat. Price to beat is the BTC reference price recorded for the contract.</p></div><span class="small" id="refreshTime">Waiting for first refresh</span></div>
  <div class="table-wrap"><table><thead><tr><th>Captured</th><th>Timeframe</th><th>Checkpoint</th><th>Contract</th><th>Forecast</th><th>UP probability</th><th>DOWN probability</th><th>Price to beat</th><th>Market midpoint</th><th>Order-book depth (bid / ask · imbalance)</th><th>Exchange quotes (bid / ask · age)</th><th>Outcome</th><th>Brier</th><th>Learned</th></tr></thead><tbody id="bioRows"><tr><td colspan="14" class="empty">Connecting to reservoir telemetry…</td></tr></tbody></table></div>
 </div></section>
@@ -109,6 +164,39 @@ const el=id=>document.getElementById(id);
 function put(id,value){const n=el(id);if(n)n.textContent=value}
 function fmtTime(v){if(!v)return "—";const d=new Date(v);return isNaN(d)?String(v):d.toLocaleString("en-US",{timeZone:"America/New_York"})}
 function clock(){put("clock",new Intl.DateTimeFormat("en-US",{timeZone:"America/New_York",hour:"2-digit",minute:"2-digit",second:"2-digit",hour12:true}).format(new Date())+" ET")}
+let activeAlertState={contractIdentity:null,annotations:[]};
+let priceChartGeneration=0, priceChartSlug=null, lastPriceChartFetchAt=0, lastPriceSeries=null;
+const svgNS="http://www.w3.org/2000/svg";
+function svgNode(tag,attrs={},label){const n=document.createElementNS(svgNS,tag);Object.entries(attrs).forEach(([k,v])=>n.setAttribute(k,String(v)));if(label!==undefined)n.textContent=String(label);return n;}
+function clearPriceChart(message,status="UNAVAILABLE",tone="warn"){
+ const host=el("contractPriceChart");if(host)host.replaceChildren();const b=el("priceChartStatus");if(b){b.textContent=status;b.className="badge "+tone;}put("priceChartMessage",message);lastPriceSeries=null;
+}
+function renderContractPriceChart(d){
+ if(!d||!Array.isArray(d.points)||d.points.length<2){clearPriceChart((d&&d.message)||"No adequate timestamped midpoint series exists for this exact contract.",d&&d.status||"UNAVAILABLE");return;}
+ const points=d.points.map(p=>({t:new Date(p.captured_at).getTime(),v:Number(p.midpoint)})).filter(p=>Number.isFinite(p.t)&&Number.isFinite(p.v)&&p.v>=0&&p.v<=1).sort((a,b)=>a.t-b.t);
+ if(points.length<2){clearPriceChart("No adequate timestamped midpoint series exists for this exact contract.","UNAVAILABLE");return;}
+ const W=900,H=300,L=54,R=18,T=18,B=38,iw=W-L-R,ih=H-T-B;
+ const x=t=>L+(t-points[0].t)/(Math.max(1,points[points.length-1].t-points[0].t))*iw;
+ const y=v=>T+(1-v)*ih;
+ const host=el("contractPriceChart");if(!host)return;host.replaceChildren();
+ const svg=svgNode("svg",{viewBox:`0 0 ${W} ${H}`,width:"100%",height:"auto",role:"img","aria-label":"Exact contract midpoint time series with alert issuance markers"});
+ [0,.25,.5,.75,1].forEach(v=>{svg.appendChild(svgNode("line",{x1:L,y1:y(v),x2:W-R,y2:y(v),stroke:"#34465c","stroke-width":1}));svg.appendChild(svgNode("text",{x:L-8,y:y(v)+4,"text-anchor":"end",fill:"#9aabc0","font-size":12},(v*100).toFixed(0)+"¢"));});
+ const line=points.map(p=>`${x(p.t).toFixed(2)},${y(p.v).toFixed(2)}`).join(" ");svg.appendChild(svgNode("polyline",{points:line,fill:"none",stroke:"#65b8ff","stroke-width":2.5,"stroke-linejoin":"round","stroke-linecap":"round"}));
+ const start=new Date(d.window_start),end=new Date(d.window_end);svg.appendChild(svgNode("text",{x:L,y:H-10,fill:"#9aabc0","font-size":12},start.toLocaleTimeString("en-US",{timeZone:"America/New_York",hour:"2-digit",minute:"2-digit"})+" ET"));svg.appendChild(svgNode("text",{x:W-R,y:H-10,"text-anchor":"end",fill:"#9aabc0","font-size":12},end.toLocaleTimeString("en-US",{timeZone:"America/New_York",hour:"2-digit",minute:"2-digit"})+" ET"));
+ const anns=activeAlertState.contractIdentity===d.contract_identity?activeAlertState.annotations:[];let drawn=0;
+ anns.forEach(a=>{const t=new Date(a.x||a.issued_at).getTime();if(!Number.isFinite(t)||t<start.getTime()||t>=end.getTime())return;const nearest=points.reduce((best,p)=>Math.abs(p.t-t)<Math.abs(best.t-t)?p:best,points[0]);const xx=x(t),yy=y(nearest.v),color=a.direction==="UP"?"#54d6a0":"#ff8585";svg.appendChild(svgNode("line",{x1:xx,y1:T,x2:xx,y2:T+ih,stroke:color,"stroke-width":1.5,"stroke-dasharray":"5 4"}));svg.appendChild(svgNode("circle",{cx:xx,cy:yy,r:5,fill:color,stroke:"#0b111a","stroke-width":2}));svg.appendChild(svgNode("text",{x:Math.min(W-R-45,Math.max(L,xx+5)),y:T+14+drawn*14,fill:color,"font-size":12,"font-weight":700},a.direction+" alert"));drawn++;});
+ host.appendChild(svg);const stale=d.status==="STALE";const b=el("priceChartStatus");if(b){b.textContent=stale?"STALE SERIES":"FRESH SERIES";b.className="badge "+(stale?"warn":"good");}
+ put("priceChartMessage",`${d.contract_identity} · ${points.length} persisted points · latest ${fmtTime(d.latest_at)} · age ${Math.round(Number(d.age_seconds)||0)}s`+(drawn?` · ${drawn} trusted alert marker(s)`:" · no trusted issuance markers for this contract")+(stale?" · not current live evidence":""));
+ lastPriceSeries=d;
+}
+async function refreshContractPriceChart(slug){
+ const now=Date.now();if(!slug){if(priceChartSlug!==null){priceChartGeneration++;priceChartSlug=null;clearPriceChart("No active Polymarket 15-minute contract is available.","NO CONTRACT");}return;}
+ const changed=slug!==priceChartSlug;if(!changed&&now-lastPriceChartFetchAt<10000)return;
+ if(changed){priceChartSlug=slug;lastPriceSeries=null;const host=el("contractPriceChart");if(host)host.replaceChildren();put("priceChartMessage","Contract rolled over; loading a fresh exact-contract series.");}
+ const generation=++priceChartGeneration;lastPriceChartFetchAt=now;
+ try{const r=await fetch("/api/contract-price-series?market_slug="+encodeURIComponent(slug)+"&ts="+now,{cache:"no-store"});const d=await r.json();if(generation!==priceChartGeneration||priceChartSlug!==slug)return;if(d.contract_identity!==slug){clearPriceChart("The returned series does not match the active contract; it was discarded.","IDENTITY MISMATCH","bad");return;}renderContractPriceChart(d);}
+ catch(e){if(generation!==priceChartGeneration||priceChartSlug!==slug)return;clearPriceChart("Price series unavailable: "+String(e.message||e),"UNAVAILABLE","warn");}
+}
 async function refreshReservoir(){
  const badge=el("bioStatus");
  try{
@@ -151,6 +239,7 @@ async function refreshLiveQuotes(){
   const p=d.polymarket||{};put("polyContract",p.slug||"No active 15m BTC contract found");put("polyQuestion",p.question||"");put("polyWindow",(p.start_at||p.end_at)?"Contract window: "+fmtTime(p.start_at)+" – "+fmtTime(p.end_at):"Contract window: —");
   const upPct=p.midpoint==null?null:Math.max(0,Math.min(100,100*Number(p.midpoint)));put("polyUpPct",upPct==null?"—":upPct.toFixed(1)+"%");put("polyDownPct",upPct==null?"—":(100-upPct).toFixed(1)+"%");put("polyUpBid",cents(p.bid));put("polyUpAsk",cents(p.ask));put("polyQuoteTime","Quote received: "+fmtTime(p.received_at));
   const status=el("polyQuoteStatus");if(status){status.textContent=p.error?"QUOTE UNAVAILABLE":p.slug?"LIVE QUOTE":"NO CONTRACT";status.className="badge "+(p.error||!p.slug?"warn":"good")}
+  refreshContractPriceChart(p.slug||null);
   const ref=d.reference||{};put("refPrice",usd(ref.price));put("refSource","Reference source: "+(ref.source||"—"));put("refTime","Timestamp: "+fmtTime(ref.received_at));put("polyRefTime","Contract start/reference time: "+fmtTime(p.start_at));
   put("quoteRefresh","Last refreshed "+new Date().toLocaleTimeString("en-US",{timeZone:"America/New_York"})+" ET");
  }catch(e){put("quoteRefresh","Live quote refresh failed: "+String(e.message||e))}
@@ -175,8 +264,103 @@ async function refreshSignalHistory(){
   put("signalHistoryRefresh","Updated "+new Date().toLocaleTimeString("en-US",{timeZone:"America/New_York"})+" ET · "+rows.length+" forecasts");
  }catch(e){put("signalHistoryRefresh","Could not load signal history: "+String(e.message||e))}
 }
-clock();setInterval(clock,1000);refreshReservoir();setInterval(refreshReservoir,10000);refreshLiveQuotes();setInterval(refreshLiveQuotes,5000);refreshVerifiedContracts();setInterval(refreshVerifiedContracts,15000);refreshSignalHistory();setInterval(refreshSignalHistory,15000);
-</script></body></html>"""
+
+
+/* Request generation: ignore late responses after contract rollover. */
+window.__reservoirAlertGeneration = window.__reservoirAlertGeneration || 0;
+function bumpAlertGeneration(){ window.__reservoirAlertGeneration += 1; return window.__reservoirAlertGeneration; }
+function applyAlertPayload(generation, d){
+  if(generation !== window.__reservoirAlertGeneration){ return false; }
+  const st=el("alertStatus");
+  activeAlertState={contractIdentity:(d.status==="ACTIVE"&&d.contract&&d.contract.identity)||null,annotations:(d.status==="ACTIVE"&&Array.isArray(d.graph_annotations)?d.graph_annotations:[])};
+  if(lastPriceSeries)renderContractPriceChart(lastPriceSeries);
+  const list=el("alertAnnotationList");
+  if(list){ list.replaceChildren(); }
+  if(d.status==="ACTIVE"&&d.alert){
+    if(st){st.textContent="ACTIVE "+d.alert.direction;st.className="badge ok";}
+    put("alertContract",d.contract&&d.contract.identity||"—");
+    put("alertWindow",d.contract?("start "+(d.contract.start_at||"—")+" · end "+(d.contract.end_at||"—")):"—");
+    put("alertDirection",d.alert.direction);
+    put("alertIssued",fmtTime(d.alert.issued_at));
+    put("alertIssuanceSource",d.alert.issuance_timestamp_source||"—");
+    put("alertLifecycle",d.alert.lifecycle||"active");
+    const anns=Array.isArray(d.graph_annotations)?d.graph_annotations:[];
+    put("alertAnnotationCount",anns.length);
+    if(list){
+      anns.forEach(a=>{
+        const li=document.createElement("li");
+        li.textContent=(a.direction||"—")+" @ "+(a.x||a.issued_at||"—")+" · "+(a.contract_identity||"");
+        list.appendChild(li);
+      });
+    }
+    put("alertMessage",d.issuance_note||"Active alert loaded.");
+  }else{
+    if(st){st.textContent=d.status||"NO ALERT";st.className="badge warn";}
+    put("alertContract",(d.contract&&d.contract.identity)||"No open 15m contract");
+    put("alertWindow","—");
+    put("alertDirection", d.status==="AMBIGUOUS_ALERT" ? "Ambiguous — no active alert." : "No active UP/DOWN alert.");
+    put("alertIssued","—");
+    put("alertIssuanceSource","—");
+    put("alertLifecycle","—");
+    put("alertAnnotationCount",0);
+    put("alertMessage",d.message||d.reason||"No active UP/DOWN alert.");
+  }
+  return true;
+}
+async function refreshActiveAlert(){
+  const generation = bumpAlertGeneration();
+  try{
+    const r=await fetch("/api/active-alert?ts="+Date.now(),{cache:"no-store"});
+    const d=await r.json();
+    if(!applyAlertPayload(generation, d)){
+      /* Stale response after rollover/generation bump — ignored. */
+      return;
+    }
+  }catch(e){
+    if(generation !== window.__reservoirAlertGeneration){ return; }
+    const st=el("alertStatus");if(st){st.textContent="ERROR";st.className="badge bad";}
+    put("alertMessage","Active alert fetch failed: "+String(e.message||e));
+  }
+}
+async function refreshRollingAccuracy(){
+  try{
+    const r=await fetch("/api/rolling-accuracy?ts="+Date.now(),{cache:"no-store"});
+    const d=await r.json();
+    const st=el("accuracyStatus");
+    const pol=d.policy||{};
+    put("accPolicyStatus",pol.status||d.status||"UNAPPROVED");
+    put("accPolicyId",pol.id||"—");
+    if(d.status==="UNAVAILABLE_POLICY_PENDING"||!d.policy_approved_env){
+      if(st){st.textContent="POLICY PENDING";st.className="badge warn";}
+      put("accPct","—");
+      put("accMessage",d.message||"Accuracy unavailable pending scoring-policy approval.");
+      put("accCorrect","—");
+      put("accScored","Scored: —");
+      put("accPending","—");
+      put("accExcluded","Excluded: —");
+    }else if(d.status==="UNAVAILABLE_NO_SCORED"||d.scored_total===0){
+      if(st){st.textContent="NO SCORED";st.className="badge warn";}
+      put("accPct","—");
+      put("accMessage",d.message||"Accuracy unavailable — no scored outcomes.");
+      put("accCorrect",String(d.correct??0));
+      put("accScored","Scored: "+(d.scored_total??0));
+      put("accPending",String(d.pending??0));
+      put("accExcluded","Excluded: "+(d.excluded??0));
+    }else{
+      if(st){st.textContent="SCORED";st.className="badge ok";}
+      put("accPct",d.accuracy_pct==null?"—":Number(d.accuracy_pct).toFixed(2)+"%");
+      put("accMessage","Policy "+(pol.id||""));
+      put("accCorrect",(d.correct??0)+" / "+(d.incorrect??0));
+      put("accScored","Scored: "+(d.scored_total??0));
+      put("accPending",String(d.pending??0));
+      put("accExcluded","Excluded: "+(d.excluded??0));
+    }
+  }catch(e){
+    const st=el("accuracyStatus");if(st){st.textContent="ERROR";st.className="badge bad";}
+    put("accMessage","Accuracy fetch failed: "+String(e.message||e));
+  }
+}
+clock();setInterval(clock,1000);refreshReservoir();setInterval(refreshReservoir,10000);refreshLiveQuotes();setInterval(refreshLiveQuotes,5000);refreshVerifiedContracts();setInterval(refreshVerifiedContracts,15000);refreshSignalHistory();setInterval(refreshSignalHistory,15000);refreshActiveAlert();setInterval(refreshActiveAlert,10000);refreshRollingAccuracy();setInterval(refreshRollingAccuracy,30000);</script></body></html>"""
 
 
 def _reservoir_columns(conn, table_name):
@@ -335,7 +519,20 @@ def biological_reservoir_status():
 
 @app.get("/api/verified-contracts")
 def verified_contracts():
-    """Return explicit verified outcomes without selecting forecasts or computing accuracy."""
+    """Return outcomes only after authoritative settlement provenance is owner-verified."""
+    if not outcome_provenance_trusted():
+        return jsonify({
+            "ok": True,
+            "status": "UNAVAILABLE_OUTCOME_PROVENANCE_PENDING",
+            "message": "Outcome verification provenance is not established; no outcomes are represented as verified.",
+            "research_only": True,
+            "live_trading_enabled": False,
+            "metrics": {"verified": None, "accuracy_pct": None,
+                        "accuracy_status": "UNAVAILABLE_OUTCOME_PROVENANCE_PENDING",
+                        "last_verified_at": None},
+            "scoring_policy": {"status": "UNAPPROVED", "unit": None, "forecast_selection": None},
+            "contracts": [],
+        })
     url = os.getenv("CONNECTOME_DATABASE_URL")
     if not url:
         return jsonify({"ok": False, "message": "CONNECTOME_DATABASE_URL is not configured.",
@@ -363,7 +560,8 @@ def verified_contracts():
                 WHERE market_slug IS NOT NULL
                   AND outcome IN ('UP','DOWN')
                   AND details->>'outcome_verified'='true'
-                  AND details ? 'settlement_source'
+                  AND NULLIF(BTRIM(details->>'settlement_source'),'') IS NOT NULL
+                  AND NULLIF(BTRIM(details->>'settled_at'),'') IS NOT NULL
                   AND COALESCE(details->>'fixture_key','')=''
                   AND COALESCE(details->>'is_synthetic','false') <> 'true'
             """).fetchone()
@@ -380,7 +578,8 @@ def verified_contracts():
                     WHERE market_slug IS NOT NULL
                       AND outcome IN ('UP','DOWN')
                       AND details->>'outcome_verified'='true'
-                      AND details ? 'settlement_source'
+                      AND NULLIF(BTRIM(details->>'settlement_source'),'') IS NOT NULL
+                      AND NULLIF(BTRIM(details->>'settled_at'),'') IS NOT NULL
                       AND COALESCE(details->>'fixture_key','')=''
                       AND COALESCE(details->>'is_synthetic','false') <> 'true'
                     ORDER BY market_slug,
@@ -428,7 +627,9 @@ def reservoir_signal_history():
                     SELECT snapshot_id, market_slug, captured_at,
                         details->>'contract_timeframe' AS timeframe, checkpoint,
                         forecast_direction, probability_up, outcome, brier_score,
-                        (details->>'outcome_verified'='true' AND details ? 'settlement_source'
+                        (details->>'outcome_verified'='true'
+                         AND NULLIF(BTRIM(details->>'settlement_source'),'') IS NOT NULL
+                         AND NULLIF(BTRIM(details->>'settled_at'),'') IS NOT NULL
                          AND outcome IN ('UP','DOWN')) AS outcome_verified,
                         row_number() OVER (PARTITION BY market_slug
                             ORDER BY captured_at DESC, snapshot_id DESC) AS history_rank
@@ -542,6 +743,314 @@ def live_quotes():
     return jsonify({"ok": True, "sources": sources, "reference": reference, "polymarket": poly,
                     "received_at": datetime.now(timezone.utc).isoformat(),
                     "refresh_seconds": 5, "research_only": True, "live_trading_enabled": False})
+
+
+
+
+@app.get("/api/contract-price-series")
+def contract_price_series():
+    """Return a bounded, real midpoint series for one exact 15-minute contract."""
+    import re
+    from flask import request
+    identity = (request.args.get("market_slug") or "").strip()
+    if not identity or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9-]{0,127}", identity):
+        return jsonify({"ok": False, "status": "UNAVAILABLE_INVALID_REQUEST",
+                        "message": "A valid exact market_slug is required.",
+                        "contract_identity": identity or None, "points": []}), 400
+    url = os.getenv("CONNECTOME_DATABASE_URL")
+    if not url:
+        return jsonify({"ok": True, "status": "UNAVAILABLE_DATABASE",
+                        "message": "CONNECTOME_DATABASE_URL is not configured.",
+                        "contract_identity": identity, "points": []}), 503
+    try:
+        import psycopg
+        from psycopg.rows import dict_row
+        with psycopg.connect(url, connect_timeout=4, row_factory=dict_row) as conn:
+            exists = conn.execute("SELECT to_regclass('public.snapshots') AS table_name").fetchone()
+            if not exists or not exists["table_name"]:
+                return jsonify({"ok": True, "status": "UNAVAILABLE_SOURCE_TABLE",
+                                "message": "The persisted Polymarket snapshots table is unavailable.",
+                                "contract_identity": identity, "points": []})
+            rows = conn.execute("""
+                WITH bounded AS (
+                    SELECT id, market_slug, captured_at, midpoint, window_start, window_end
+                    FROM public.snapshots
+                    WHERE market_slug=%s AND timeframe='15m'
+                      AND midpoint IS NOT NULL
+                      AND window_start IS NOT NULL AND window_end IS NOT NULL
+                      AND window_end-window_start=INTERVAL '15 minutes'
+                      AND captured_at >= window_start AND captured_at < window_end
+                    ORDER BY captured_at DESC, id DESC
+                    LIMIT 500
+                )
+                SELECT market_slug, captured_at, midpoint, window_start, window_end
+                FROM bounded ORDER BY captured_at ASC, id ASC
+            """, (identity,)).fetchall()
+        result = normalize_contract_price_series(rows, identity, datetime.now(timezone.utc))
+        return jsonify({"ok": True, "research_only": True, "live_trading_enabled": False, **result})
+    except Exception as exc:
+        logging.exception("Exact contract price series query failed")
+        return jsonify({"ok": False, "status": "UNAVAILABLE_QUERY_ERROR",
+                        "message": "Price history is temporarily unavailable; server-side query failed.",
+                        "contract_identity": identity, "points": []}), 500
+
+
+@app.get("/api/current-contract")
+def current_contract():
+    """
+    Resolve the exact open 15-minute contract at evaluation time T (start <= T < end).
+
+    Accepts optional JSON body via query is not used; evaluation uses server UTC now.
+    When CONNECTOME_DATABASE_URL is set, candidate windows are read from recent
+    observations' details.contract_timeline when present. Otherwise returns
+    NO_OPEN_CONTRACT with an explicit reason (producer gap / no candidates).
+    """
+    from flask import request
+    now = datetime.now(timezone.utc)
+    # Optional override for deterministic tests only via header (not documented publicly)
+    override = request.headers.get("X-Evaluation-Time")
+    if override:
+        parsed = parse_aware_timestamp(override)
+        if parsed:
+            now = parsed
+
+    candidates = []
+    url = os.getenv("CONNECTOME_DATABASE_URL")
+    if url:
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+            with psycopg.connect(url, connect_timeout=4, row_factory=dict_row) as conn:
+                exists = conn.execute(
+                    "SELECT to_regclass('public.biological_reservoir_observations') AS obs"
+                ).fetchone()
+                if exists and exists["obs"]:
+                    rows = conn.execute("""
+                        SELECT DISTINCT ON (market_slug)
+                            market_slug,
+                            details->'contract_timeline'->'current_contract' AS current_contract,
+                            details->>'contract_timeframe' AS timeframe,
+                            captured_at
+                        FROM biological_reservoir_observations
+                        WHERE market_slug IS NOT NULL
+                          AND COALESCE(details->>'fixture_key','')=''
+                          AND COALESCE(details->>'is_synthetic','false') <> 'true'
+                        ORDER BY market_slug, captured_at DESC
+                        LIMIT 50
+                    """).fetchall()
+                    for row in rows:
+                        cc = row.get("current_contract") or {}
+                        if not isinstance(cc, dict):
+                            cc = {}
+                        candidates.append({
+                            "identity": row["market_slug"],
+                            "market_slug": row["market_slug"],
+                            "start_at": cc.get("start_at") or cc.get("start") or cc.get("window_start"),
+                            "end_at": cc.get("end_at") or cc.get("end") or cc.get("window_end"),
+                            "timeframe": row.get("timeframe") or cc.get("timeframe"),
+                            "question": cc.get("question"),
+                            "source": "observation_contract_timeline",
+                        })
+        except Exception as exc:
+            logging.exception("current-contract candidate load failed")
+            return jsonify({
+                "ok": False,
+                "status": "ERROR",
+                "message": type(exc).__name__ + ": " + str(exc),
+                "contract": None,
+            }), 500
+
+    result = select_open_contract(candidates, now)
+    result["ok"] = result["status"] in ("OPEN", "NO_OPEN_CONTRACT")
+    result["research_only"] = True
+    result["live_trading_enabled"] = False
+    result["candidate_count"] = len(candidates)
+    return jsonify(result)
+
+
+@app.get("/api/active-alert")
+def active_alert():
+    """
+    Active UP/DOWN alert for the exact open contract only.
+
+    Never carries a prior contract's alert forward. Returns explicit
+    NO_ACTIVE_ALERT when none is eligible.
+    """
+    from flask import request
+    now = datetime.now(timezone.utc)
+    override = request.headers.get("X-Evaluation-Time")
+    if override:
+        parsed = parse_aware_timestamp(override)
+        if parsed:
+            now = parsed
+
+    # Resolve open contract first
+    contract_resp = current_contract().get_json()
+    contract = (contract_resp or {}).get("contract")
+    if not contract or contract_resp.get("status") != "OPEN":
+        return jsonify({
+            "ok": True,
+            "status": "NO_ACTIVE_ALERT",
+            "message": "No active UP/DOWN alert.",
+            "reason": "no_open_contract",
+            "alert": None,
+            "contract": contract,
+            "graph_annotations": [],
+            "research_only": True,
+            "live_trading_enabled": False,
+        })
+
+    identity = contract["identity"]
+    records = []
+    url = os.getenv("CONNECTOME_DATABASE_URL")
+    if url:
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+            with psycopg.connect(url, connect_timeout=4, row_factory=dict_row) as conn:
+                rows = conn.execute("""
+                    SELECT snapshot_id, market_slug, captured_at, checkpoint,
+                           forecast_direction, probability_up,
+                           details->>'issued_at' AS issued_at
+                    FROM biological_reservoir_observations
+                    WHERE market_slug = %s
+                      AND forecast_direction IN ('UP', 'DOWN')
+                      AND COALESCE(details->>'fixture_key','')=''
+                      AND COALESCE(details->>'is_synthetic','false') <> 'true'
+                    ORDER BY captured_at DESC, snapshot_id DESC
+                    LIMIT 50
+                """, (identity,)).fetchall()
+                for row in rows:
+                    records.append({
+                        "market_slug": row["market_slug"],
+                        "direction": row["forecast_direction"],
+                        "forecast_direction": row["forecast_direction"],
+                        "captured_at": row["captured_at"],
+                        "issued_at": row.get("issued_at"),
+                        "snapshot_id": row["snapshot_id"],
+                        "checkpoint": row.get("checkpoint"),
+                        "probability_up": row.get("probability_up"),
+                    })
+        except Exception as exc:
+            logging.exception("active-alert load failed")
+            return jsonify({
+                "ok": False,
+                "status": "ERROR",
+                "message": type(exc).__name__ + ": " + str(exc),
+                "alert": None,
+                "graph_annotations": [],
+            }), 500
+
+    selected = select_active_up_down_alert(
+        records,
+        identity,
+        now,
+        contract_start=contract.get("start_at"),
+        contract_end=contract.get("end_at"),
+    )
+    annotations = alerts_to_graph_annotations(
+        [selected["alert"]] if selected.get("alert") else []
+    )
+    return jsonify({
+        "ok": True,
+        "research_only": True,
+        "live_trading_enabled": False,
+        "contract": contract,
+        "graph_annotations": annotations,
+        "issuance_note": (
+            "Active alerts require ISSUANCE_SEMANTICS_TRUSTED and issued_at. Records with only "
+            "captured_at are not eligible alerts or graph annotations; they may "
+            "appear as alert_issuance_unverified observations. details.issued_at "
+            "is a proposed producer field until verified against worker code."
+        ),
+        "contract_metadata_contract": {
+            "verified_observation_fields": [
+                "snapshot_id", "market_slug", "captured_at", "checkpoint",
+                "forecast_direction", "probability_up", "outcome", "brier_score",
+                "details.contract_timeframe", "details.outcome_verified",
+                "details.settlement_source", "details.settled_at",
+                "details.contract_timeline.current_contract.reference_price (read by main telemetry)",
+            ],
+            "proposed_or_unverified_fields": [
+                "details.issued_at",
+                "details.contract_timeline.current_contract.start_at",
+                "details.contract_timeline.current_contract.end_at",
+                "alert_sequence / issuance_sequence",
+            ],
+            "required_for_active_alert": [
+                "exact contract identity", "UP or DOWN direction", "issued_at",
+                "timezone-aware exact 15-minute contract start_at/end_at",
+                "ISSUANCE_SEMANTICS_TRUSTED=true after producer verification",
+            ],
+            "ordering_trust": (
+                "ALERT_SEQUENCE_ORDERING_TRUSTED=true is separately required before "
+                "sequence values can resolve conflicting equal-time directions; default false."
+            ),
+            "missing_boundaries_behavior": "UNAVAILABLE; no guessed contract or issuance window",
+        },
+        **selected,
+    })
+
+
+@app.get("/api/rolling-accuracy")
+def rolling_accuracy():
+    """
+    Rolling 24h UP/DOWN accuracy account. Always returns policy-pending values
+    until an explicit approval flag is set in process environment.
+
+    Owner approval required: set RESERVOIR_SCORING_POLICY_APPROVED=true only after
+    explicit scoring-policy and release approval. Default is disabled.
+    """
+    from flask import request
+    now = datetime.now(timezone.utc)
+    override = request.headers.get("X-Evaluation-Time")
+    if override:
+        parsed = parse_aware_timestamp(override)
+        if parsed:
+            now = parsed
+
+    approved = os.getenv("RESERVOIR_SCORING_POLICY_APPROVED", "").strip().lower() == "true"
+
+    records = []
+    url = os.getenv("CONNECTOME_DATABASE_URL")
+    if url and approved:
+        # Only load scoring inputs when approved; still safe if not configured
+        try:
+            import psycopg
+            from psycopg.rows import dict_row
+            with psycopg.connect(url, connect_timeout=4, row_factory=dict_row) as conn:
+                rows = conn.execute("""
+                    SELECT snapshot_id, market_slug, captured_at, forecast_direction,
+                           outcome,
+                           details->>'outcome_verified' AS outcome_verified,
+                           details->>'settled_at' AS settled_at,
+                           details->>'issued_at' AS issued_at,
+                           details->'contract_timeline'->'current_contract'->>'start_at' AS contract_start,
+                           details->'contract_timeline'->'current_contract'->>'end_at' AS contract_end
+                    FROM biological_reservoir_observations
+                    WHERE market_slug IS NOT NULL
+                      AND COALESCE(details->>'fixture_key','')=''
+                      AND COALESCE(details->>'is_synthetic','false') <> 'true'
+                      AND captured_at > (NOW() AT TIME ZONE 'utc') - INTERVAL '48 hours'
+                    ORDER BY captured_at ASC
+                    LIMIT 5000
+                """).fetchall()
+                for row in rows:
+                    records.append(dict(row))
+        except Exception as exc:
+            logging.exception("rolling-accuracy load failed")
+            return jsonify({
+                "ok": False,
+                "status": "ERROR",
+                "message": type(exc).__name__ + ": " + str(exc),
+            }), 500
+
+    result = compute_rolling_accuracy(records, now, policy_approved=approved)
+    result["ok"] = True
+    result["research_only"] = True
+    result["live_trading_enabled"] = False
+    result["policy_approved_env"] = approved
+    return jsonify(result)
 
 
 @app.get("/health")

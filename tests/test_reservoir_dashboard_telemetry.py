@@ -1,10 +1,11 @@
 from __future__ import annotations
+import sys
 
 import importlib
 import sys
 import types
 import unittest
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
 
@@ -21,11 +22,13 @@ class FakeResult:
 
 
 class FakeConnection:
-    def __init__(self, *, model_columns=(), verified_count=2, correct_count=1):
+    def __init__(self, *, model_columns=(), verified_count=2, correct_count=1, price_rows=None):
         self.model_columns = set(model_columns)
         self.verified_count = verified_count
         self.correct_count = correct_count
+        self.price_rows = list(price_rows or [])
         self.sql = []
+        self.params = []
 
     def __enter__(self):
         return self
@@ -35,6 +38,11 @@ class FakeConnection:
 
     def execute(self, query, params=None):
         self.sql.append(query)
+        self.params.append(params)
+        if "to_regclass('public.snapshots')" in query:
+            return FakeResult(row={"table_name": "snapshots"})
+        if "FROM bounded ORDER BY captured_at ASC" in query:
+            return FakeResult(rows=self.price_rows)
         if "to_regclass('public.biological_reservoir_model_state')" in query:
             return FakeResult(row={"model_table": "biological_reservoir_model_state",
                                    "obs_table": "biological_reservoir_observations"})
@@ -101,6 +109,55 @@ class ReservoirDashboardTelemetryTests(unittest.TestCase):
         self.assertEqual(body["freshness"]["source_snapshot"]["status"], "UNAVAILABLE")
         self.assertNotEqual(body["freshness"]["worker_heartbeat"]["timestamp"], body["model"]["updated_at"])
         self.assertTrue(any("information_schema.columns" in query for query in conn.sql))
+
+    def test_contract_price_series_is_exact_slug_bounded_and_timestamped(self):
+        slug = "cpc-btc-updown-15m-2026-10-17-1945z"
+        now = datetime.now(timezone.utc)
+        start = now - timedelta(minutes=2)
+        end = start + timedelta(minutes=15)
+        conn = FakeConnection(price_rows=[
+            {"market_slug": slug, "captured_at": start + timedelta(minutes=1),
+             "midpoint": 0.48, "window_start": start, "window_end": end},
+            {"market_slug": slug, "captured_at": start + timedelta(minutes=2),
+             "midpoint": 0.51, "window_start": start, "window_end": end},
+        ])
+        with patch.dict("os.environ", {"CONNECTOME_DATABASE_URL": "postgresql://test"}), \
+             patch("psycopg.connect", return_value=conn):
+            response = self.dashboard.app.test_client().get(
+                "/api/contract-price-series?market_slug=" + slug
+            )
+        self.assertEqual(response.status_code, 200)
+        body = response.get_json()
+        self.assertEqual(body["status"], "AVAILABLE")
+        self.assertEqual(body["contract_identity"], slug)
+        self.assertEqual(body["point_count"], 2)
+        self.assertEqual(conn.params[-1], (slug,))
+        self.assertIn("LIMIT 500", conn.sql[-1])
+        self.assertIn("ORDER BY captured_at DESC, id DESC", conn.sql[-1])
+        self.assertIn("ORDER BY captured_at ASC, id ASC", conn.sql[-1])
+        self.assertNotIn(slug, conn.sql[-1])  # slug is passed as a SQL parameter
+
+    def test_contract_price_series_hides_database_exception_details(self):
+        slug = "cpc-btc-updown-15m-2026-10-17-1945z"
+        secret_like_error = "postgresql://user:pass@db.example/private-db connection refused"
+        with patch.dict("os.environ", {"CONNECTOME_DATABASE_URL": "postgresql://test"}), \
+             patch("psycopg.connect", side_effect=RuntimeError(secret_like_error)):
+            response = self.dashboard.app.test_client().get(
+                "/api/contract-price-series?market_slug=" + slug
+            )
+        self.assertEqual(response.status_code, 500)
+        body = response.get_json()
+        self.assertEqual(body["status"], "UNAVAILABLE_QUERY_ERROR")
+        self.assertNotIn("user:pass", body["message"])
+        self.assertNotIn("db.example", body["message"])
+        self.assertEqual(body["message"], "Price history is temporarily unavailable; server-side query failed.")
+
+    def test_contract_price_series_rejects_invalid_slug_before_database_access(self):
+        response = self.dashboard.app.test_client().get(
+            "/api/contract-price-series?market_slug=bad%20slug"
+        )
+        self.assertEqual(response.status_code, 400)
+        self.assertEqual(response.get_json()["status"], "UNAVAILABLE_INVALID_REQUEST")
 
     def test_accuracy_is_unavailable_until_contract_scoring_policy_is_approved(self):
         conn = FakeConnection(verified_count=2, correct_count=1)
