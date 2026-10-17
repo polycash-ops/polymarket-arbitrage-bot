@@ -50,11 +50,13 @@ class FakeConnection:
                 "updated_at": datetime.now(timezone.utc),
                 "worker_heartbeat_at": None, "source_snapshot_at": None,
             })
-        if "WITH selected AS" in query and "count(*) AS verified" in query:
-            return FakeResult(row={"verified": self.verified_count, "correct": self.correct_count,
-                                   "mean_brier": 0.2, "last_verified_at": None})
-        if "WITH selected AS" in query and "AS correct" in query:
-            return FakeResult(rows=[{"market_slug": "contract-a"}, {"market_slug": "contract-b"}])
+        if "count(DISTINCT market_slug) AS verified" in query:
+            return FakeResult(row={"verified": self.verified_count, "last_verified_at": None})
+        if "WITH verified_outcomes AS" in query:
+            return FakeResult(rows=[
+                {"market_slug": "contract-a", "outcome": "UP", "settlement_source": "verified"},
+                {"market_slug": "contract-b", "outcome": "DOWN", "settlement_source": "verified"},
+            ])
         if "WITH ranked AS" in query:
             return FakeResult(rows=[{"market_slug": "contract-a", "history_rank": 1,
                                      "forecast_direction": "UP", "outcome": None,
@@ -115,10 +117,14 @@ class ReservoirDashboardTelemetryTests(unittest.TestCase):
             "status": "UNAPPROVED", "unit": None, "forecast_selection": None
         })
         self.assertIn("require approval", body["metrics"]["accuracy_denominator"])
-        # Verified-outcome display is retained, but no row is presented as scored.
-        self.assertTrue(body["contracts"])
-        self.assertIsNone(body["contracts"][0].get("correct"))
-        self.assertIsNone(body["contracts"][0].get("brier_score"))
+        # Verified outcomes are independent of forecast selection and contain no score fields.
+        self.assertEqual([row["outcome"] for row in body["contracts"]], ["UP", "DOWN"])
+        self.assertNotIn("forecast_direction", body["contracts"][0])
+        self.assertNotIn("correct", body["contracts"][0])
+        self.assertNotIn("brier_score", body["contracts"][0])
+        outcome_query = next(query for query in conn.sql if "WITH verified_outcomes AS" in query)
+        self.assertIn("outcome_verified", outcome_query)
+        self.assertNotIn("checkpoint='5m_remaining'", outcome_query)
 
     def test_signal_history_is_partitioned_by_contract_and_excludes_fixtures(self):
         conn = FakeConnection()
