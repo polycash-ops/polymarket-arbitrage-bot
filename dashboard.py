@@ -95,12 +95,12 @@ h1{font-size:clamp(1.5rem,4vw,2.2rem);line-height:1.15;margin:0 0 8px;letter-spa
  <div class="section-head"><div><h2>Verified contracts</h2><p class="small">Only contracts with an explicit verified UP/DOWN settlement are listed. Pending or inferred outcomes are excluded.</p></div><span class="small" id="verifiedRefresh">Waiting for verified outcomes</span></div>
  <div class="cards" style="margin-bottom:12px">
   <article class="card"><div class="metric-label">Verified outcomes</div><div class="metric" id="verifiedCount">—</div></article>
-  <article class="card"><div class="metric-label">Correct forecasts</div><div class="metric" id="verifiedCorrect">—</div></article>
+  <article class="card"><div class="metric-label">Scoring policy</div><div class="metric" id="verifiedCorrect">Pending approval</div></article>
   <article class="card"><div class="metric-label">Directional accuracy</div><div class="metric" id="verifiedAccuracy">—</div></article>
-  <article class="card"><div class="metric-label">Mean Brier score</div><div class="metric" id="verifiedBrier">—</div></article>
+  <article class="card"><div class="metric-label">Mean Brier score</div><div class="metric" id="verifiedBrier">Unavailable</div></article>
   <article class="card"><div class="metric-label">Last verified</div><div class="metric" id="verifiedLast">—</div></article>
  </div>
- <div class="table-wrap"><table><thead><tr><th>Contract</th><th>Timeframe</th><th>Checkpoint</th><th>Forecast</th><th>UP probability</th><th>Verified outcome</th><th>Correct</th><th>Brier</th><th>Learning update</th><th>Update applied at</th><th>Model version</th><th>Settlement source</th><th>Verified at</th></tr></thead><tbody id="verifiedRows"><tr><td colspan="13" class="empty">Loading verified contracts…</td></tr></tbody></table></div>
+ <div class="table-wrap"><table><thead><tr><th>Contract</th><th>Timeframe</th><th>Verified outcome</th><th>Settlement source</th><th>Verified at</th></tr></thead><tbody id="verifiedRows"><tr><td colspan="5" class="empty">Loading verified contracts…</td></tr></tbody></table></div>
 </div></section>
 <p class="foot">This dashboard reads only the Biological Reservoir research tables. It does not start or control the Polymarket arbitrage bot. All activity is research-only; live trading is hard-blocked.</p>
 </main>
@@ -159,10 +159,10 @@ async function refreshLiveQuotes(){
 async function refreshVerifiedContracts(){
  try{
   const r=await fetch("/api/verified-contracts?ts="+Date.now(),{cache:"no-store"});const d=await r.json();if(!r.ok)throw new Error(d.message||("HTTP "+r.status));
-  const m=d.metrics||{};put("verifiedCount",m.verified??0);put("verifiedCorrect",m.correct==null?"—":m.correct+" / "+(m.verified??0));put("verifiedAccuracy",m.accuracy_status==="UNAVAILABLE_POLICY_PENDING"?"Unavailable · scoring policy pending":m.accuracy_pct==null?"—":Number(m.accuracy_pct).toFixed(1)+"%");put("verifiedBrier",m.mean_brier==null?"—":Number(m.mean_brier).toFixed(5));put("verifiedLast",fmtTime(m.last_verified_at));
+  const m=d.metrics||{};put("verifiedCount",m.verified??0);put("verifiedCorrect","Pending approval");put("verifiedAccuracy",m.accuracy_status==="UNAVAILABLE_POLICY_PENDING"?"Unavailable · scoring policy pending":"—");put("verifiedBrier","Unavailable pending policy");put("verifiedLast",fmtTime(m.last_verified_at));
   const body=el("verifiedRows");body.replaceChildren();const rows=Array.isArray(d.contracts)?d.contracts:[];
-  if(!rows.length){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=13;td.className="empty";td.textContent="No explicitly verified reservoir outcomes yet. Pending contracts are intentionally excluded.";tr.appendChild(td);body.appendChild(tr)}
-  rows.forEach(x=>{const tr=document.createElement("tr");const vals=[x.market_slug||"—",x.timeframe||"—",x.checkpoint||"—",x.forecast_direction||"—",x.probability_up==null?"—":(100*Number(x.probability_up)).toFixed(1)+"%",x.outcome||"—",x.correct==null?"—":(x.correct?"YES":"NO"),x.brier_score==null?"—":Number(x.brier_score).toFixed(5),x.learning_update_applied?"APPLIED":"NOT APPLIED",fmtTime(x.learning_applied_at),x.model_version==null?"—":"v"+x.model_version,x.settlement_source||"Explicit settlement recorded",fmtTime(x.verified_at)];vals.forEach(v=>{const td=document.createElement("td");td.textContent=String(v);tr.appendChild(td)});body.appendChild(tr)});
+  if(!rows.length){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=5;td.className="empty";td.textContent="No explicitly verified reservoir outcomes yet. Pending contracts are intentionally excluded.";tr.appendChild(td);body.appendChild(tr)}
+  rows.forEach(x=>{const tr=document.createElement("tr");const vals=[x.market_slug||"—",x.timeframe||"—",x.outcome||"—",x.settlement_source||"Explicit settlement recorded",fmtTime(x.verified_at)];vals.forEach(v=>{const td=document.createElement("td");td.textContent=String(v);tr.appendChild(td)});body.appendChild(tr)});
   put("verifiedRefresh","Updated "+new Date().toLocaleTimeString("en-US",{timeZone:"America/New_York"})+" ET");
  }catch(e){put("verifiedRefresh","Could not load verified outcomes: "+String(e.message||e))}
 }
@@ -385,7 +385,7 @@ def biological_reservoir_status():
 
 @app.get("/api/verified-contracts")
 def verified_contracts():
-    """Return one verified directional forecast per contract; duplicates do not inflate accuracy."""
+    """Return explicit verified outcomes without selecting forecasts or computing accuracy."""
     url = os.getenv("CONNECTOME_DATABASE_URL")
     if not url:
         return jsonify({"ok": False, "message": "CONNECTOME_DATABASE_URL is not configured.",
@@ -394,70 +394,68 @@ def verified_contracts():
         import psycopg
         from psycopg.rows import dict_row
         with psycopg.connect(url, connect_timeout=4, row_factory=dict_row) as conn:
-            exists = conn.execute("SELECT to_regclass('public.biological_reservoir_observations') AS obs_table").fetchone()
+            exists = conn.execute(
+                "SELECT to_regclass('public.biological_reservoir_observations') AS obs_table"
+            ).fetchone()
             if not exists or not exists["obs_table"]:
-                return jsonify({"ok": True, "metrics": {"verified": 0, "correct": 0,
-                    "accuracy_pct": None, "mean_brier": None, "last_verified_at": None,
-                    "accuracy_denominator": "unique verified contracts"}, "contracts": []})
+                return jsonify({
+                    "ok": True,
+                    "metrics": {"verified": 0, "accuracy_pct": None,
+                                "accuracy_status": "UNAVAILABLE_POLICY_PENDING",
+                                "last_verified_at": None},
+                    "scoring_policy": {"status": "UNAPPROVED", "unit": None, "forecast_selection": None},
+                    "contracts": [],
+                })
             metrics = conn.execute("""
-                WITH selected AS (
-                    SELECT DISTINCT ON (market_slug) market_slug, forecast_direction, outcome,
-                        brier_score, NULLIF(details->>'settled_at','')::timestamptz AS verified_at
-                    FROM biological_reservoir_observations
-                    WHERE market_slug IS NOT NULL
-                      AND forecast_direction IN ('UP','DOWN') AND outcome IN ('UP','DOWN')
-                      AND details->>'outcome_verified'='true' AND details ? 'settlement_source'
-                      AND COALESCE(details->>'fixture_key','')=''
-                      AND COALESCE(details->>'is_synthetic','false') <> 'true'
-                    ORDER BY market_slug,
-                        CASE WHEN checkpoint='5m_remaining' THEN 0 ELSE 1 END,
-                        captured_at ASC, snapshot_id ASC
-                )
-                SELECT count(*) AS verified,
-                    count(*) FILTER (WHERE upper(forecast_direction)=upper(outcome)) AS correct,
-                    avg(brier_score) AS mean_brier, max(verified_at) AS last_verified_at
-                FROM selected
+                SELECT count(DISTINCT market_slug) AS verified,
+                       max(NULLIF(details->>'settled_at','')::timestamptz) AS last_verified_at
+                FROM biological_reservoir_observations
+                WHERE market_slug IS NOT NULL
+                  AND outcome IN ('UP','DOWN')
+                  AND details->>'outcome_verified'='true'
+                  AND details ? 'settlement_source'
+                  AND COALESCE(details->>'fixture_key','')=''
+                  AND COALESCE(details->>'is_synthetic','false') <> 'true'
             """).fetchone()
             rows = conn.execute("""
-                WITH selected AS (
-                    SELECT DISTINCT ON (market_slug) market_slug, captured_at, checkpoint,
-                        forecast_direction, probability_up, outcome, brier_score, learning_update_applied,
-                        details->>'learning_applied_at' AS learning_applied_at,
-                        NULLIF(details->>'reservoir_model_version','')::integer AS model_version,
+                WITH verified_outcomes AS (
+                    SELECT DISTINCT ON (market_slug)
+                        market_slug,
+                        details->>'contract_timeframe' AS timeframe,
+                        outcome,
                         details->>'settlement_source' AS settlement_source,
                         NULLIF(details->>'settled_at','')::timestamptz AS verified_at,
-                        details->>'contract_timeframe' AS timeframe,
-                        (upper(forecast_direction)=upper(outcome)) AS correct
+                        captured_at
                     FROM biological_reservoir_observations
                     WHERE market_slug IS NOT NULL
-                      AND forecast_direction IN ('UP','DOWN') AND outcome IN ('UP','DOWN')
-                      AND details->>'outcome_verified'='true' AND details ? 'settlement_source'
+                      AND outcome IN ('UP','DOWN')
+                      AND details->>'outcome_verified'='true'
+                      AND details ? 'settlement_source'
                       AND COALESCE(details->>'fixture_key','')=''
                       AND COALESCE(details->>'is_synthetic','false') <> 'true'
                     ORDER BY market_slug,
-                        CASE WHEN checkpoint='5m_remaining' THEN 0 ELSE 1 END,
-                        captured_at ASC, snapshot_id ASC
+                        NULLIF(details->>'settled_at','')::timestamptz DESC NULLS LAST,
+                        captured_at DESC, snapshot_id DESC
                 )
-                SELECT * FROM selected
-                ORDER BY verified_at DESC NULLS LAST, captured_at DESC LIMIT 200
+                SELECT market_slug, timeframe, outcome, settlement_source, verified_at
+                FROM verified_outcomes
+                ORDER BY verified_at DESC NULLS LAST, market_slug
+                LIMIT 200
             """).fetchall()
-        n, correct = int(metrics["verified"] or 0), int(metrics["correct"] or 0)
-        # Verified outcomes remain displayable, but scoring is deliberately unavailable
-        # until an authoritative contract-level scoring policy is approved.
-        for row in rows:
-            row["correct"] = None
-            row["brier_score"] = None
-        return jsonify({"ok": True, "research_only": True, "live_trading_enabled": False,
-            "metrics": {"verified": n, "correct": None,
+        return jsonify({
+            "ok": True, "research_only": True, "live_trading_enabled": False,
+            "metrics": {
+                "verified": int(metrics["verified"] or 0),
                 "accuracy_pct": None,
                 "accuracy_status": "UNAVAILABLE_POLICY_PENDING",
-                "accuracy_denominator": "not scored; scoring unit and forecast-selection rule require approval",
-                "mean_brier": None,
-                "last_verified_at": metrics["last_verified_at"]},
+                "accuracy_denominator": "not scored; contract scoring unit and forecast-selection rule require approval",
+                "last_verified_at": metrics["last_verified_at"],
+            },
             "scoring_policy": {"status": "UNAPPROVED", "unit": None, "forecast_selection": None},
-            "contracts": rows})
+            "contracts": rows,
+        })
     except Exception as exc:
-        logging.exception("Verified contracts endpoint failed")
+        logging.exception("Verified Reservoir outcomes endpoint failed")
         return jsonify({"ok": False, "message": type(exc).__name__ + ": " + str(exc),
                         "metrics": {}, "contracts": []}), 500
 
