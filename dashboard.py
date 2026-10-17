@@ -289,53 +289,6 @@ def biological_reservoir_status():
                 SELECT * FROM ranked WHERE contract_row <= 5
                 ORDER BY captured_at DESC, snapshot_id DESC LIMIT 200
             """).fetchall()
-            verified = conn.execute("""
-                WITH selected AS (
-                    SELECT DISTINCT ON (market_slug)
-                        market_slug, captured_at, checkpoint, forecast_direction,
-                        probability_up, outcome, brier_score, learning_update_applied,
-                        details->>'learning_applied_at' AS learning_applied_at,
-                        NULLIF(details->>'reservoir_model_version','')::integer AS model_version,
-                        details->>'settlement_source' AS settlement_source,
-                        NULLIF(details->>'settled_at','')::timestamptz AS verified_at,
-                        details->>'contract_timeframe' AS timeframe,
-                        (upper(forecast_direction)=upper(outcome)) AS correct
-                    FROM biological_reservoir_observations
-                    WHERE market_slug IS NOT NULL
-                      AND forecast_direction IN ('UP','DOWN') AND outcome IN ('UP','DOWN')
-                      AND details->>'outcome_verified'='true'
-                      AND details ? 'settlement_source'
-                      AND COALESCE(details->>'fixture_key','')=''
-                      AND COALESCE(details->>'is_synthetic','false') <> 'true'
-                    ORDER BY market_slug,
-                        CASE WHEN checkpoint='5m_remaining' THEN 0 ELSE 1 END,
-                        captured_at ASC, snapshot_id ASC
-                )
-                SELECT * FROM selected
-                ORDER BY verified_at DESC NULLS LAST, captured_at DESC LIMIT 200
-            """).fetchall()
-            verified_metrics = conn.execute("""
-                WITH selected AS (
-                    SELECT DISTINCT ON (market_slug) market_slug, forecast_direction,
-                        outcome, brier_score, NULLIF(details->>'settled_at','')::timestamptz AS verified_at
-                    FROM biological_reservoir_observations
-                    WHERE market_slug IS NOT NULL
-                      AND forecast_direction IN ('UP','DOWN') AND outcome IN ('UP','DOWN')
-                      AND details->>'outcome_verified'='true' AND details ? 'settlement_source'
-                      AND COALESCE(details->>'fixture_key','')=''
-                      AND COALESCE(details->>'is_synthetic','false') <> 'true'
-                    ORDER BY market_slug,
-                        CASE WHEN checkpoint='5m_remaining' THEN 0 ELSE 1 END,
-                        captured_at ASC, snapshot_id ASC
-                )
-                SELECT count(*) AS verified,
-                    count(*) FILTER (WHERE upper(forecast_direction)=upper(outcome)) AS correct,
-                    avg(brier_score) AS mean_brier, max(verified_at) AS last_verified_at
-                FROM selected
-            """).fetchone()
-        for row in verified:
-            row["correct"] = None
-            row["brier_score"] = None
         worker_freshness = _freshness(model["worker_heartbeat_at"])
         source_freshness = _freshness(model["source_snapshot_at"])
         observation_freshness = _freshness(stats["latest_at"])
@@ -350,8 +303,6 @@ def biological_reservoir_status():
                    "TELEMETRY SCHEMA INCOMPLETE" if not schema_complete else "WORKER STATUS UNAVAILABLE")
         settled = int(stats["settled_directional"] or 0)
         correct = int(stats["correct_directional"] or 0)
-        verified_n = int(verified_metrics["verified"] or 0)
-        verified_correct = int(verified_metrics["correct"] or 0)
         return jsonify({"ok": True, "status": overall, "research_only": True, "live_trading_enabled": False,
             "model": model, "freshness": {
                 "worker_heartbeat": worker_freshness,
@@ -368,13 +319,12 @@ def biological_reservoir_status():
                 "brier_score": round(float(stats["brier_score"]), 5) if stats["brier_score"] is not None else None,
                 "market_brier_score": round(float(market["score"]), 5) if market["score"] is not None else None,
                 "learning_updates": int(stats["learning_updates"] or 0)},
-            "verified_metrics": {"verified": verified_n, "correct": None,
+            "verified_metrics": {
                 "accuracy_pct": None,
                 "accuracy_status": "UNAVAILABLE_POLICY_PENDING",
                 "accuracy_denominator": "not scored; scoring unit and forecast-selection rule require approval",
-                "mean_brier": None,
-                "last_verified_at": verified_metrics["last_verified_at"]},
-            "recent": recent, "signal_history": history, "verified_contracts": verified,
+            },
+            "recent": recent, "signal_history": history,
             "message": ("Worker heartbeat and source freshness are separate. Missing telemetry columns are not inferred from model writes or observations. "
                         "Research/paper forecasts only; live trading is hard-blocked.")})
     except Exception as exc:
