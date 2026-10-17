@@ -3,7 +3,7 @@ import asyncio
 import logging
 import os
 import threading
-from datetime import datetime
+from datetime import datetime, timezone
 
 from flask import Flask, jsonify
 from main import TradingBot
@@ -85,7 +85,7 @@ h1{font-size:clamp(1.5rem,4vw,2.2rem);line-height:1.15;margin:0 0 8px;letter-spa
 </div></section>
 <section class="section panel"><div class="panel-inner">
  <div class="section-head"><div><h2>Recent reservoir observations</h2><p class="small">UP/DOWN probabilities estimate which side wins at contract expiry relative to that contract’s price to beat. Price to beat is the BTC reference price recorded for the contract.</p></div><span class="small" id="refreshTime">Waiting for first refresh</span></div>
- <div class="table-wrap"><table><thead><tr><th>Captured</th><th>Timeframe</th><th>Checkpoint</th><th>Contract</th><th>Forecast</th><th>UP probability</th><th>DOWN probability</th><th>Price to beat</th><th>Market midpoint</th><th>Order-book depth (bid / ask · imbalance)</th><th>Exchange quotes (bid / ask · age)</th><th>Outcome</th><th>Brier</th><th>Learned</th></tr></thead><tbody id="bioRows"><tr><td colspan="14" class="empty">Connecting to reservoir telemetry…</td></tr></tbody></table></div>
+ <div class="table-wrap"><table><thead><tr><th>Captured</th><th>Timeframe</th><th>Checkpoint</th><th>Contract</th><th>Forecast</th><th>UP probability</th><th>DOWN probability</th><th>Price to beat</th><th>Market midpoint</th><th>Order-book depth (bid / ask · imbalance)</th><th>Exchange quotes (bid / ask · age)</th><th>Outcome</th><th>Provenance</th><th>Brier</th><th>Learned</th></tr></thead><tbody id="bioRows"><tr><td colspan="15" class="empty">Connecting to reservoir telemetry…</td></tr></tbody></table></div>
 </div></section>
 <section class="section panel"><div class="panel-inner">
  <div class="section-head"><div><h2>Verified contracts</h2><p class="small">Only contracts with an explicit verified UP/DOWN settlement are listed. Pending or inferred outcomes are excluded.</p></div><span class="small" id="verifiedRefresh">Waiting for verified outcomes</span></div>
@@ -96,7 +96,7 @@ h1{font-size:clamp(1.5rem,4vw,2.2rem);line-height:1.15;margin:0 0 8px;letter-spa
   <article class="card"><div class="metric-label">Mean Brier score</div><div class="metric" id="verifiedBrier">—</div></article>
   <article class="card"><div class="metric-label">Last verified</div><div class="metric" id="verifiedLast">—</div></article>
  </div>
- <div class="table-wrap"><table><thead><tr><th>Contract</th><th>Timeframe</th><th>Checkpoint</th><th>Forecast</th><th>UP probability</th><th>Verified outcome</th><th>Correct</th><th>Brier</th><th>Learning update</th><th>Update applied at</th><th>Model version</th><th>Settlement source</th><th>Verified at</th></tr></thead><tbody id="verifiedRows"><tr><td colspan="13" class="empty">Loading verified contracts…</td></tr></tbody></table></div>
+ <div class="table-wrap"><table><thead><tr><th>Contract title</th><th>Contract</th><th>Timeframe</th><th>Checkpoint</th><th>Signal captured</th><th>Forecast</th><th>UP probability</th><th>Verified outcome</th><th>Correct</th><th>Brier</th><th>Learning update</th><th>Update applied at</th><th>Model version</th><th>Settlement source</th><th>Verified at</th></tr></thead><tbody id="verifiedRows"><tr><td colspan="15" class="empty">Loading verified contracts…</td></tr></tbody></table></div>
 </div></section>
 <p class="foot">This dashboard reads only the Biological Reservoir research tables. It does not start or control the Polymarket arbitrage bot. All activity is research-only; live trading is hard-blocked.</p>
 </main>
@@ -113,19 +113,19 @@ async function refreshReservoir(){
   if(!r.ok)throw new Error(d.message||("HTTP "+r.status));
   const m=d.model||{},o=d.observations||{};
   put("bioStatus",d.status||"INITIALIZING");
-  if(badge)badge.className="badge "+(["WORKING","RECENT ACTIVITY","RECORDING"].includes(d.status)?"good":["STALE","ERROR","NOT CONNECTED"].includes(d.status)?"bad":"warn");
+  if(badge)badge.className="badge "+(["WORKING","RECENT ACTIVITY"].includes(d.status)?"good":["STALE","DATA STALE","SIGNAL STALE","ERROR","NOT CONNECTED"].includes(d.status)?"bad":"warn");
   put("bioNodes",m.node_count??0);put("bioEdges",m.edge_count??0);
   put("bioSnapshot","Latest snapshot: "+(o.latest_snapshot_id??m.last_snapshot_id??"—"));
   put("bioGraph",(m.model_version==null?"—":"v"+m.model_version)+" · "+(m.graph_snapshot||"graph pending"));
   put("bioObservations",o.total??0);put("bioLearning",o.learning_updates??m.learning_updates??0);
-  put("bioUpdated","Latest: "+fmtTime(o.latest_at||m.updated_at));
+  put("bioUpdated","Observation: "+fmtTime(o.latest_at)+" · Signal: "+fmtTime(o.latest_signal_at)+" · Heartbeat: "+fmtTime(m.updated_at));
   put("bioAccuracy","Resolved accuracy: "+(o.accuracy_pct==null?"—":Number(o.accuracy_pct).toFixed(2)+"%")+" · "+(o.settled??0)+" resolved");
   put("bioBrier",(o.brier_score==null?"—":Number(o.brier_score).toFixed(5))+" / "+(o.market_brier_score==null?"—":Number(o.market_brier_score).toFixed(5)));
   put("bioExpansion","Last graph expansion: "+fmtTime(m.last_expansion_at));
   put("bioMessage",d.message||"Telemetry loaded from persistent reservoir tables.");
   const body=el("bioRows");body.replaceChildren();const rows=Array.isArray(d.recent)?d.recent:[];
-  if(!rows.length){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=14;td.className="empty";td.textContent="No reservoir observations recorded yet";tr.appendChild(td);body.appendChild(tr)}
-  rows.forEach(x=>{const tr=document.createElement("tr");const q=x.btc_quotes||{};const qfmt=s=>{const v=q[s];if(!v)return s+": —";const bid=v.bid_usd==null?"—":usd(v.bid_usd),ask=v.ask_usd==null?"—":usd(v.ask_usd),age=v.quote_age_seconds==null?"—":Math.round(Number(v.quote_age_seconds))+"s";return s+": "+bid+" / "+ask+" · "+age};const exchangeQuotes=["coinbase","kraken","binance"].map(qfmt).join(" | ");const depthNum=v=>v==null||!Number.isFinite(Number(v))?"—":Number(v).toLocaleString("en-US",{maximumFractionDigits:4});const depth="Bid "+depthNum(x.market_bid_depth)+" / Ask "+depthNum(x.market_ask_depth)+" · Imbalance "+(x.market_depth_imbalance==null?"—":Number(x.market_depth_imbalance).toFixed(3));const vals=[fmtTime(x.captured_at),x.timeframe||"—",x.checkpoint||"continuous",x.market_slug||"—",x.forecast_direction||"—",x.probability_up==null?"—":(100*Number(x.probability_up)).toFixed(1)+"%",x.probability_up==null?"—":(100*(1-Number(x.probability_up))).toFixed(1)+"%",x.price_to_beat==null?"—":usd(x.price_to_beat),x.market_midpoint==null?"—":Number(x.market_midpoint).toFixed(4),depth,exchangeQuotes,x.outcome||"PENDING",x.brier_score==null?"—":Number(x.brier_score).toFixed(5),x.learning_update_applied?"YES":"—"];vals.forEach(v=>{const td=document.createElement("td");td.textContent=String(v);tr.appendChild(td)});body.appendChild(tr)});
+  if(!rows.length){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=15;td.className="empty";td.textContent="No persisted directional UP/DOWN signals recorded yet";tr.appendChild(td);body.appendChild(tr)}
+  rows.forEach(x=>{const tr=document.createElement("tr");const q=x.btc_quotes||{};const qfmt=s=>{const v=q[s];if(!v)return s+": —";const bid=v.bid_usd==null?"—":usd(v.bid_usd),ask=v.ask_usd==null?"—":usd(v.ask_usd),age=v.quote_age_seconds==null?"—":Math.round(Number(v.quote_age_seconds))+"s";return s+": "+bid+" / "+ask+" · "+age};const exchangeQuotes=["coinbase","kraken","binance"].map(qfmt).join(" | ");const depthNum=v=>v==null||!Number.isFinite(Number(v))?"—":Number(v).toLocaleString("en-US",{maximumFractionDigits:4});const depth="Bid "+depthNum(x.market_bid_depth)+" / Ask "+depthNum(x.market_ask_depth)+" · Imbalance "+(x.market_depth_imbalance==null?"—":Number(x.market_depth_imbalance).toFixed(3));const vals=[fmtTime(x.captured_at),x.timeframe||"—",x.checkpoint||"continuous",(x.contract_title?x.contract_title+" · ":"")+(x.market_slug||"—"),x.forecast_direction||"—",x.probability_up==null?"—":(100*Number(x.probability_up)).toFixed(1)+"%",x.probability_up==null?"—":(100*(1-Number(x.probability_up))).toFixed(1)+"%",x.price_to_beat==null?"—":usd(x.price_to_beat),x.market_midpoint==null?"—":Number(x.market_midpoint).toFixed(4),depth,exchangeQuotes,x.outcome_verified?x.outcome:"PENDING / UNVERIFIED",(x.provenance_status||("snapshot #"+x.snapshot_id))+(x.settlement_source?" · "+x.settlement_source:""),x.brier_score==null?"—":Number(x.brier_score).toFixed(5),x.learning_update_applied?"YES":"—"];vals.forEach(v=>{const td=document.createElement("td");td.textContent=String(v);tr.appendChild(td)});body.appendChild(tr)});
   put("refreshTime","Last refreshed "+new Date().toLocaleTimeString("en-US",{timeZone:"America/New_York"})+" ET");
  }catch(e){
   if(badge){badge.textContent="NOT CONNECTED";badge.className="badge bad"}
@@ -157,8 +157,8 @@ async function refreshVerifiedContracts(){
   const r=await fetch("/api/verified-contracts?ts="+Date.now(),{cache:"no-store"});const d=await r.json();if(!r.ok)throw new Error(d.message||("HTTP "+r.status));
   const m=d.metrics||{};put("verifiedCount",m.verified??0);put("verifiedCorrect",m.correct==null?"—":m.correct+" / "+(m.verified??0));put("verifiedAccuracy",m.accuracy_pct==null?"—":Number(m.accuracy_pct).toFixed(1)+"%");put("verifiedBrier",m.mean_brier==null?"—":Number(m.mean_brier).toFixed(5));put("verifiedLast",fmtTime(m.last_verified_at));
   const body=el("verifiedRows");body.replaceChildren();const rows=Array.isArray(d.contracts)?d.contracts:[];
-  if(!rows.length){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=13;td.className="empty";td.textContent="No explicitly verified reservoir outcomes yet. Pending contracts are intentionally excluded.";tr.appendChild(td);body.appendChild(tr)}
-  rows.forEach(x=>{const tr=document.createElement("tr");const vals=[x.market_slug||"—",x.timeframe||"—",x.checkpoint||"—",x.forecast_direction||"—",x.probability_up==null?"—":(100*Number(x.probability_up)).toFixed(1)+"%",x.outcome||"—",x.correct==null?"—":(x.correct?"YES":"NO"),x.brier_score==null?"—":Number(x.brier_score).toFixed(5),x.learning_update_applied?"APPLIED":"NOT APPLIED",fmtTime(x.learning_applied_at),x.model_version==null?"—":"v"+x.model_version,x.settlement_source||"Explicit settlement recorded",fmtTime(x.verified_at)];vals.forEach(v=>{const td=document.createElement("td");td.textContent=String(v);tr.appendChild(td)});body.appendChild(tr)});
+  if(!rows.length){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=15;td.className="empty";td.textContent="No explicitly verified directional contract outcomes yet. Pending and duplicate checkpoint rows are excluded.";tr.appendChild(td);body.appendChild(tr)}
+  rows.forEach(x=>{const tr=document.createElement("tr");const vals=[x.contract_title||"—",x.market_slug||"—",x.timeframe||"—",x.checkpoint||"—",fmtTime(x.captured_at),x.forecast_direction||"—",x.probability_up==null?"—":(100*Number(x.probability_up)).toFixed(1)+"%",x.outcome||"—",x.correct==null?"—":(x.correct?"YES":"NO"),x.brier_score==null?"—":Number(x.brier_score).toFixed(5),x.learning_update_applied?"APPLIED":"NOT APPLIED",fmtTime(x.learning_applied_at),x.model_version==null?"—":"v"+x.model_version,x.settlement_source||"—",fmtTime(x.verified_at)];vals.forEach(v=>{const td=document.createElement("td");td.textContent=String(v);tr.appendChild(td)});body.appendChild(tr)});
   put("verifiedRefresh","Updated "+new Date().toLocaleTimeString("en-US",{timeZone:"America/New_York"})+" ET");
  }catch(e){put("verifiedRefresh","Could not load verified outcomes: "+String(e.message||e))}
 }
@@ -186,37 +186,65 @@ def biological_reservoir_status():
             if not model:
                 return jsonify({"ok": True, "status": "INITIALIZING", "message": "Reservoir model state row has not been created yet.", "model": None, "observations": {}, "recent": []})
             stats = conn.execute("""SELECT count(*) AS total, max(captured_at) AS latest_at,
+                max(captured_at) FILTER (WHERE upper(forecast_direction) IN ('UP','DOWN')) AS latest_signal_at,
                 max(snapshot_id) AS latest_snapshot_id,
-                count(*) FILTER (WHERE outcome IS NOT NULL) AS settled,
-                count(*) FILTER (WHERE outcome IS NOT NULL AND upper(forecast_direction)=upper(outcome)) AS correct,
-                avg(brier_score) FILTER (WHERE brier_score IS NOT NULL) AS brier_score,
                 count(*) FILTER (WHERE learning_update_applied) AS learning_updates
                 FROM biological_reservoir_observations""").fetchone()
-            market = conn.execute("""SELECT avg(power(market_midpoint -
-                CASE WHEN upper(outcome)='UP' THEN 1.0 ELSE 0.0 END, 2)) AS score
-                FROM biological_reservoir_observations WHERE outcome IS NOT NULL""").fetchone()
-            recent = conn.execute("""SELECT snapshot_id, market_slug, captured_at, details->>'contract_timeframe' AS timeframe, checkpoint,
-                forecast_direction, probability_up,
+            contract_metrics = conn.execute("""WITH selected AS (
+                SELECT DISTINCT ON (market_slug) market_slug,forecast_direction,outcome,brier_score,market_midpoint
+                FROM biological_reservoir_observations
+                WHERE checkpoint='5m_remaining' AND upper(forecast_direction) IN ('UP','DOWN')
+                  AND outcome IN ('UP','DOWN') AND details->>'outcome_verified'='true'
+                  AND details ? 'settlement_source'
+                ORDER BY market_slug,captured_at ASC,snapshot_id ASC
+            ) SELECT count(*) AS settled,
+                count(*) FILTER (WHERE upper(forecast_direction)=upper(outcome)) AS correct,
+                avg(brier_score) AS brier_score,
+                avg(power(market_midpoint-CASE WHEN upper(outcome)='UP' THEN 1.0 ELSE 0.0 END,2)) AS market_brier_score
+                FROM selected""").fetchone()
+            recent = conn.execute("""SELECT snapshot_id, market_slug, captured_at,
+                details->>'contract_title' AS contract_title,
+                details->>'contract_timeframe' AS timeframe, checkpoint, forecast_direction, probability_up,
                 NULLIF(details->'contract_timeline'->'current_contract'->>'reference_price','')::double precision AS price_to_beat,
                 market_midpoint, market_bid_depth, market_ask_depth, market_depth_imbalance, order_book_levels, outcome, brier_score,
-                learning_update_applied, details->'btc_feed_asof'->'samples' AS btc_quotes
+                learning_update_applied, details->'btc_feed_asof'->'samples' AS btc_quotes,
+                details->>'provenance_status' AS provenance_status,
+                details->>'settlement_source' AS settlement_source,
+                (details->>'outcome_verified'='true') AS outcome_verified
                 FROM biological_reservoir_observations
+                WHERE upper(forecast_direction) IN ('UP','DOWN')
                 ORDER BY captured_at DESC, snapshot_id DESC LIMIT 30""").fetchall()
-        settled = int(stats["settled"] or 0)
-        # Use whichever persisted heartbeat is newer: model-state writes can lag
-        # while the worker continues appending observation snapshots.
-        timestamps = [value for value in (model["updated_at"], stats["latest_at"]) if value is not None]
-        latest = max(timestamps) if timestamps else None
-        age = max(0, (datetime.now().astimezone() - latest.astimezone()).total_seconds()) if latest else None
-        status = "WORKING" if age is not None and age <= 30 else "RECENT ACTIVITY" if age is not None and age <= 180 else "STALE" if age is not None else "INITIALIZING"
+        settled = int(contract_metrics["settled"] or 0)
+        correct = int(contract_metrics["correct"] or 0)
+        now = datetime.now(timezone.utc)
+        def age_seconds(value):
+            return max(0.0, (now - value.astimezone(timezone.utc)).total_seconds()) if value else None
+        heartbeat_age = age_seconds(model["updated_at"])
+        observation_age = age_seconds(stats["latest_at"])
+        signal_age = age_seconds(stats["latest_signal_at"])
+        process_status = "WORKING" if heartbeat_age is not None and heartbeat_age <= 30 else "RECENT ACTIVITY" if heartbeat_age is not None and heartbeat_age <= 180 else "STALE" if heartbeat_age is not None else "INITIALIZING"
+        observation_freshness = "NO DATA" if observation_age is None else "FRESH" if observation_age <= 180 else "STALE"
+        signal_freshness = "NO SIGNAL" if signal_age is None else "RECENT" if signal_age <= 900 else "STALE"
+        status = process_status
+        if process_status in ("WORKING", "RECENT ACTIVITY") and observation_freshness != "FRESH":
+            status = "DATA STALE"
+        elif process_status in ("WORKING", "RECENT ACTIVITY") and signal_freshness == "STALE":
+            status = "SIGNAL STALE"
+        elif process_status in ("WORKING", "RECENT ACTIVITY") and signal_freshness == "NO SIGNAL":
+            status = "NO SIGNAL"
         return jsonify({"ok": True, "status": status, "research_only": True, "live_trading_enabled": False,
             "model": model, "observations": {"total": int(stats["total"] or 0),
-            "latest_at": stats["latest_at"], "latest_snapshot_id": stats["latest_snapshot_id"],
-            "settled": settled, "accuracy_pct": round(100 * int(stats["correct"] or 0) / settled, 2) if settled else None,
-            "brier_score": round(float(stats["brier_score"]), 5) if stats["brier_score"] is not None else None,
-            "market_brier_score": round(float(market["score"]), 5) if market["score"] is not None else None,
+            "latest_at": stats["latest_at"], "latest_signal_at": stats["latest_signal_at"], "latest_snapshot_id": stats["latest_snapshot_id"],
+            "settled": settled, "correct": correct, "accuracy_unit": "unique contracts",
+            "accuracy_pct": round(100 * correct / settled, 2) if settled else None,
+            "brier_score": round(float(contract_metrics["brier_score"]), 5) if contract_metrics["brier_score"] is not None else None,
+            "market_brier_score": round(float(contract_metrics["market_brier_score"]), 5) if contract_metrics["market_brier_score"] is not None else None,
             "learning_updates": int(stats["learning_updates"] or 0)}, "recent": recent,
-            "message": "Research/paper forecasts only. Accuracy counts only resolved outcomes; learning counts persisted updates."})
+            "freshness": {"process_heartbeat": {"status": process_status, "at": model["updated_at"], "age_seconds": heartbeat_age},
+                          "model_observation": {"status": observation_freshness, "at": stats["latest_at"], "age_seconds": observation_age, "stale_after_seconds": 180},
+                          "trade_signal": {"status": signal_freshness, "at": stats["latest_signal_at"], "age_seconds": signal_age, "stale_after_seconds": 900}},
+            "freshness_policy": {"heartbeat_active_seconds": 30, "heartbeat_stale_seconds": 180, "data_stale_seconds": 180, "signal_stale_seconds": 900},
+            "message": "Heartbeat, persisted observations, and directional signal freshness are reported separately. Accuracy uses the earliest verified directional 5m checkpoint per unique contract; learning counts persisted updates."})
     except Exception as exc:
         logging.exception("Biological Reservoir telemetry endpoint failed")
         return jsonify({"ok": False, "status": "ERROR", "message": type(exc).__name__ + ": " + str(exc), "model": None, "observations": {}, "recent": []}), 500
@@ -235,29 +263,37 @@ def verified_contracts():
             exists = conn.execute("SELECT to_regclass('public.biological_reservoir_observations') AS obs_table").fetchone()
             if not exists or not exists["obs_table"]:
                 return jsonify({"ok": True, "metrics": {"verified": 0, "correct": 0, "accuracy_pct": None, "mean_brier": None, "last_verified_at": None}, "contracts": []})
-            metrics = conn.execute("""
-                SELECT count(*) AS verified,
+            metrics = conn.execute("""WITH selected AS (
+                SELECT DISTINCT ON (market_slug) market_slug,forecast_direction,outcome,brier_score,details
+                FROM biological_reservoir_observations
+                WHERE checkpoint='5m_remaining' AND upper(forecast_direction) IN ('UP','DOWN')
+                  AND outcome IN ('UP','DOWN') AND details->>'outcome_verified'='true'
+                  AND details ? 'settlement_source'
+                ORDER BY market_slug,captured_at ASC,snapshot_id ASC
+            ) SELECT count(*) AS verified,
                        count(*) FILTER (WHERE upper(forecast_direction)=upper(outcome)) AS correct,
                        avg(brier_score) FILTER (WHERE brier_score IS NOT NULL) AS mean_brier,
                        max(NULLIF(details->>'settled_at','')::timestamptz) AS last_verified_at
-                FROM biological_reservoir_observations
-                WHERE outcome IN ('UP','DOWN') AND details->>'outcome_verified'='true' AND details ? 'settlement_source'
-            """).fetchone()
-            rows = conn.execute("""
-                SELECT o.market_slug, o.captured_at, o.checkpoint, o.forecast_direction,
-                       o.probability_up, o.outcome, o.brier_score, o.learning_update_applied,
-                       o.details->>'learning_applied_at' AS learning_applied_at,
-                       NULLIF(o.details->>'reservoir_model_version', '')::integer AS model_version,
-                       o.details->>'settlement_source' AS settlement_source,
-                       NULLIF(o.details->>'settled_at','')::timestamptz AS verified_at,
-                       o.details->>'contract_timeframe' AS timeframe,
-                       (upper(o.forecast_direction)=upper(o.outcome)) AS correct
+                FROM selected""").fetchone()
+            rows = conn.execute("""WITH selected AS (
+                SELECT DISTINCT ON (o.market_slug) o.market_slug,o.captured_at,o.checkpoint,o.forecast_direction,
+                       o.probability_up,o.outcome,o.brier_score,o.learning_update_applied,o.details,o.snapshot_id
                 FROM biological_reservoir_observations o
-                WHERE o.outcome IN ('UP','DOWN') AND o.details->>'outcome_verified'='true' AND o.details ? 'settlement_source'
-                ORDER BY NULLIF(o.details->>'settled_at','')::timestamptz DESC NULLS LAST,
-                         o.captured_at DESC
-                LIMIT 200
-            """).fetchall()
+                WHERE o.checkpoint='5m_remaining' AND upper(o.forecast_direction) IN ('UP','DOWN')
+                  AND o.outcome IN ('UP','DOWN') AND o.details->>'outcome_verified'='true'
+                  AND o.details ? 'settlement_source'
+                ORDER BY o.market_slug,o.captured_at ASC,o.snapshot_id ASC
+            ) SELECT market_slug, captured_at, checkpoint, forecast_direction, probability_up, outcome, brier_score,
+                       learning_update_applied, details->>'contract_title' AS contract_title,
+                       details->>'learning_applied_at' AS learning_applied_at,
+                       NULLIF(details->>'reservoir_model_version', '')::integer AS model_version,
+                       details->>'settlement_source' AS settlement_source,
+                       NULLIF(details->>'settled_at','')::timestamptz AS verified_at,
+                       details->>'contract_timeframe' AS timeframe,
+                       (upper(forecast_direction)=upper(outcome)) AS correct
+                FROM selected
+                ORDER BY NULLIF(details->>'settled_at','')::timestamptz DESC NULLS LAST,captured_at DESC
+                LIMIT 200""").fetchall()
         n = int(metrics["verified"] or 0)
         correct = int(metrics["correct"] or 0)
         return jsonify({"ok": True, "research_only": True, "live_trading_enabled": False,
