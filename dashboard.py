@@ -123,7 +123,7 @@ async function refreshReservoir(){
   put("bioGraph",(m.model_version==null?"—":"v"+m.model_version)+" · "+(m.graph_snapshot||"graph pending"));
   put("bioObservations",o.total??0);put("bioLearning",o.learning_updates??m.learning_updates??0);
   put("bioUpdated","Latest: "+fmtTime(o.latest_at||m.updated_at));
-  put("bioAccuracy","Resolved accuracy: "+(o.accuracy_pct==null?"—":Number(o.accuracy_pct).toFixed(2)+"%")+" · "+(o.settled??0)+" resolved");
+  put("bioAccuracy","Accuracy unavailable pending scoring-policy approval · "+(o.settled??0)+" resolved rows");
   put("bioBrier",(o.brier_score==null?"—":Number(o.brier_score).toFixed(5))+" / "+(o.market_brier_score==null?"—":Number(o.market_brier_score).toFixed(5)));
   put("bioExpansion","Last graph expansion: "+fmtTime(m.last_expansion_at));
   const freshness=d.freshness||{};const wf=freshness.worker_heartbeat||{};const sf=freshness.source_snapshot||{};put("bioMessage",(d.message||"Telemetry loaded from persistent reservoir tables.")+" Worker heartbeat: "+(wf.status||"UNAVAILABLE")+"; source snapshot: "+(sf.status||"UNAVAILABLE")+".");
@@ -358,16 +358,18 @@ def biological_reservoir_status():
                 "telemetry_schema_complete": schema_complete},
             "observations": {"total": int(stats["total"] or 0),
                 "latest_at": stats["latest_at"], "latest_snapshot_id": stats["latest_snapshot_id"],
-                "settled": settled, "correct": correct,
-                "accuracy_denominator": "directional observation rows (not unique contracts)",
-                "accuracy_pct": round(100 * correct / settled, 2) if settled else None,
+                "settled": settled, "correct": None,
+                "accuracy_status": "UNAVAILABLE_POLICY_PENDING",
+                "accuracy_denominator": "not scored; contract scoring unit and forecast-selection rule require approval",
+                "accuracy_pct": None,
                 "brier_score": round(float(stats["brier_score"]), 5) if stats["brier_score"] is not None else None,
                 "market_brier_score": round(float(market["score"]), 5) if market["score"] is not None else None,
                 "learning_updates": int(stats["learning_updates"] or 0)},
-            "verified_metrics": {"verified": verified_n, "correct": verified_correct,
-                "accuracy_pct": round(100 * verified_correct / verified_n, 2) if verified_n else None,
-                "accuracy_denominator": "unique verified contracts; earliest persisted 5m_remaining directional forecast",
-                "mean_brier": round(float(verified_metrics["mean_brier"]), 5) if verified_metrics["mean_brier"] is not None else None,
+            "verified_metrics": {"verified": verified_n, "correct": None,
+                "accuracy_pct": None,
+                "accuracy_status": "UNAVAILABLE_POLICY_PENDING",
+                "accuracy_denominator": "not scored; scoring unit and forecast-selection rule require approval",
+                "mean_brier": None,
                 "last_verified_at": verified_metrics["last_verified_at"]},
             "recent": recent, "signal_history": history, "verified_contracts": verified,
             "message": ("Worker heartbeat and source freshness are separate. Missing telemetry columns are not inferred from model writes or observations. "
@@ -437,12 +439,20 @@ def verified_contracts():
                 ORDER BY verified_at DESC NULLS LAST, captured_at DESC LIMIT 200
             """).fetchall()
         n, correct = int(metrics["verified"] or 0), int(metrics["correct"] or 0)
+        # Verified outcomes remain displayable, but scoring is deliberately unavailable
+        # until an authoritative contract-level scoring policy is approved.
+        for row in rows:
+            row["correct"] = None
+            row["brier_score"] = None
         return jsonify({"ok": True, "research_only": True, "live_trading_enabled": False,
-            "metrics": {"verified": n, "correct": correct,
-                "accuracy_pct": round(100 * correct / n, 2) if n else None,
-                "accuracy_denominator": "unique verified contracts; earliest persisted 5m_remaining directional forecast",
-                "mean_brier": round(float(metrics["mean_brier"]), 5) if metrics["mean_brier"] is not None else None,
-                "last_verified_at": metrics["last_verified_at"]}, "contracts": rows})
+            "metrics": {"verified": n, "correct": None,
+                "accuracy_pct": None,
+                "accuracy_status": "UNAVAILABLE_POLICY_PENDING",
+                "accuracy_denominator": "not scored; scoring unit and forecast-selection rule require approval",
+                "mean_brier": None,
+                "last_verified_at": metrics["last_verified_at"]},
+            "scoring_policy": {"status": "UNAPPROVED", "unit": None, "forecast_selection": None},
+            "contracts": rows})
     except Exception as exc:
         logging.exception("Verified contracts endpoint failed")
         return jsonify({"ok": False, "message": type(exc).__name__ + ": " + str(exc),
