@@ -161,8 +161,11 @@ class ReservoirDashboardTelemetryTests(unittest.TestCase):
 
     def test_accuracy_is_unavailable_until_contract_scoring_policy_is_approved(self):
         conn = FakeConnection(verified_count=2, correct_count=1)
-        with patch.dict("os.environ", {"CONNECTOME_DATABASE_URL": "postgresql://test"}), \
-             patch("psycopg.connect", return_value=conn):
+        # Isolate scoring-policy gating from the independent provenance trust gate.
+        with patch.dict("os.environ", {
+            "CONNECTOME_DATABASE_URL": "postgresql://test",
+            "OUTCOME_PROVENANCE_TRUSTED": "true",
+        }), patch("psycopg.connect", return_value=conn):
             response = self.dashboard.app.test_client().get("/api/verified-contracts")
         self.assertEqual(response.status_code, 200)
         body = response.get_json()
@@ -181,6 +184,19 @@ class ReservoirDashboardTelemetryTests(unittest.TestCase):
         outcome_query = next(query for query in conn.sql if "WITH verified_outcomes AS" in query)
         self.assertIn("outcome_verified", outcome_query)
         self.assertNotIn("checkpoint='5m_remaining'", outcome_query)
+
+    def test_verified_contracts_are_unavailable_without_outcome_provenance_trust(self):
+        with patch.dict("os.environ", {
+            "CONNECTOME_DATABASE_URL": "postgresql://test",
+            "OUTCOME_PROVENANCE_TRUSTED": "",
+        }), patch("psycopg.connect") as connect:
+            response = self.dashboard.app.test_client().get("/api/verified-contracts")
+        self.assertEqual(response.status_code, 200)
+        body = response.get_json()
+        self.assertEqual(body["status"], "UNAVAILABLE_OUTCOME_PROVENANCE_PENDING")
+        self.assertIsNone(body["metrics"]["verified"])
+        self.assertEqual(body["contracts"], [])
+        connect.assert_not_called()
 
     def test_signal_history_is_partitioned_by_contract_and_excludes_fixtures(self):
         conn = FakeConnection()
