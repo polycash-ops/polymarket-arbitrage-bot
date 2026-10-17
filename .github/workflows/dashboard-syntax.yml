@@ -1,0 +1,21 @@
+name: Dashboard syntax check
+
+on:
+  pull_request:
+    paths:
+      - "dashboard.py"
+      - ".github/workflows/dashboard-syntax.yml"
+  push:
+    branches:
+      - "codex/reservoir-dashboard-freshness-contract-accuracy"
+
+jobs:
+  python-syntax:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile dashboard
+        run: python -m py_compile dashboard.py
