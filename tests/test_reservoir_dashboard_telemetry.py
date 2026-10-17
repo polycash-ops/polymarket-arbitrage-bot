@@ -100,7 +100,7 @@ class ReservoirDashboardTelemetryTests(unittest.TestCase):
         self.assertNotEqual(body["freshness"]["worker_heartbeat"]["timestamp"], body["model"]["updated_at"])
         self.assertTrue(any("information_schema.columns" in query for query in conn.sql))
 
-    def test_verified_accuracy_uses_unique_contract_denominator(self):
+    def test_accuracy_is_unavailable_until_contract_scoring_policy_is_approved(self):
         conn = FakeConnection(verified_count=2, correct_count=1)
         with patch.dict("os.environ", {"CONNECTOME_DATABASE_URL": "postgresql://test"}), \
              patch("psycopg.connect", return_value=conn):
@@ -108,14 +108,17 @@ class ReservoirDashboardTelemetryTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         body = response.get_json()
         self.assertEqual(body["metrics"]["verified"], 2)
-        self.assertEqual(body["metrics"]["correct"], 1)
-        self.assertEqual(body["metrics"]["accuracy_pct"], 50.0)
-        self.assertIn("unique verified contracts", body["metrics"]["accuracy_denominator"])
-        selection = next(query for query in conn.sql if "WITH selected AS" in query)
-        self.assertIn("DISTINCT ON (market_slug)", selection)
-        self.assertIn("captured_at ASC, snapshot_id ASC", selection)
-        self.assertIn("checkpoint='5m_remaining'", selection)
-        self.assertIn("outcome_verified", selection)
+        self.assertIsNone(body["metrics"]["correct"])
+        self.assertIsNone(body["metrics"]["accuracy_pct"])
+        self.assertEqual(body["metrics"]["accuracy_status"], "UNAVAILABLE_POLICY_PENDING")
+        self.assertEqual(body["scoring_policy"], {
+            "status": "UNAPPROVED", "unit": None, "forecast_selection": None
+        })
+        self.assertIn("require approval", body["metrics"]["accuracy_denominator"])
+        # Verified-outcome display is retained, but no row is presented as scored.
+        self.assertTrue(body["contracts"])
+        self.assertIsNone(body["contracts"][0].get("correct"))
+        self.assertIsNone(body["contracts"][0].get("brier_score"))
 
     def test_signal_history_is_partitioned_by_contract_and_excludes_fixtures(self):
         conn = FakeConnection()
