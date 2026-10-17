@@ -88,15 +88,19 @@ h1{font-size:clamp(1.5rem,4vw,2.2rem);line-height:1.15;margin:0 0 8px;letter-spa
  <div class="table-wrap"><table><thead><tr><th>Captured</th><th>Timeframe</th><th>Checkpoint</th><th>Contract</th><th>Forecast</th><th>UP probability</th><th>DOWN probability</th><th>Price to beat</th><th>Market midpoint</th><th>Order-book depth (bid / ask · imbalance)</th><th>Exchange quotes (bid / ask · age)</th><th>Outcome</th><th>Brier</th><th>Learned</th></tr></thead><tbody id="bioRows"><tr><td colspan="14" class="empty">Connecting to reservoir telemetry…</td></tr></tbody></table></div>
 </div></section>
 <section class="section panel"><div class="panel-inner">
+ <div class="section-head"><div><h2>Contract signal history</h2><p class="small">Last five persisted forecasts per contract. Pending outcomes remain pending; only explicitly verified settlements count as verified.</p></div><span class="small" id="signalHistoryRefresh">Waiting for signal history</span></div>
+ <div class="table-wrap"><table><thead><tr><th>Contract</th><th>Captured</th><th>Timeframe</th><th>Checkpoint</th><th>Forecast</th><th>UP probability</th><th>Outcome</th><th>Verified</th><th>Brier</th></tr></thead><tbody id="signalHistoryRows"><tr><td colspan="9" class="empty">Loading contract signal history…</td></tr></tbody></table></div>
+</div></section>
+<section class="section panel"><div class="panel-inner">
  <div class="section-head"><div><h2>Verified contracts</h2><p class="small">Only contracts with an explicit verified UP/DOWN settlement are listed. Pending or inferred outcomes are excluded.</p></div><span class="small" id="verifiedRefresh">Waiting for verified outcomes</span></div>
  <div class="cards" style="margin-bottom:12px">
   <article class="card"><div class="metric-label">Verified outcomes</div><div class="metric" id="verifiedCount">—</div></article>
-  <article class="card"><div class="metric-label">Correct forecasts</div><div class="metric" id="verifiedCorrect">—</div></article>
+  <article class="card"><div class="metric-label">Scoring policy</div><div class="metric" id="verifiedCorrect">Pending approval</div></article>
   <article class="card"><div class="metric-label">Directional accuracy</div><div class="metric" id="verifiedAccuracy">—</div></article>
-  <article class="card"><div class="metric-label">Mean Brier score</div><div class="metric" id="verifiedBrier">—</div></article>
+  <article class="card"><div class="metric-label">Mean Brier score</div><div class="metric" id="verifiedBrier">Unavailable</div></article>
   <article class="card"><div class="metric-label">Last verified</div><div class="metric" id="verifiedLast">—</div></article>
  </div>
- <div class="table-wrap"><table><thead><tr><th>Contract</th><th>Timeframe</th><th>Checkpoint</th><th>Forecast</th><th>UP probability</th><th>Verified outcome</th><th>Correct</th><th>Brier</th><th>Learning update</th><th>Update applied at</th><th>Model version</th><th>Settlement source</th><th>Verified at</th></tr></thead><tbody id="verifiedRows"><tr><td colspan="13" class="empty">Loading verified contracts…</td></tr></tbody></table></div>
+ <div class="table-wrap"><table><thead><tr><th>Contract</th><th>Timeframe</th><th>Verified outcome</th><th>Settlement source</th><th>Verified at</th></tr></thead><tbody id="verifiedRows"><tr><td colspan="5" class="empty">Loading verified contracts…</td></tr></tbody></table></div>
 </div></section>
 <p class="foot">This dashboard reads only the Biological Reservoir research tables. It does not start or control the Polymarket arbitrage bot. All activity is research-only; live trading is hard-blocked.</p>
 </main>
@@ -119,10 +123,10 @@ async function refreshReservoir(){
   put("bioGraph",(m.model_version==null?"—":"v"+m.model_version)+" · "+(m.graph_snapshot||"graph pending"));
   put("bioObservations",o.total??0);put("bioLearning",o.learning_updates??m.learning_updates??0);
   put("bioUpdated","Latest: "+fmtTime(o.latest_at||m.updated_at));
-  put("bioAccuracy","Resolved accuracy: "+(o.accuracy_pct==null?"—":Number(o.accuracy_pct).toFixed(2)+"%")+" · "+(o.settled??0)+" resolved");
+  put("bioAccuracy","Accuracy unavailable pending scoring-policy approval · "+(o.settled??0)+" resolved rows");
   put("bioBrier",(o.brier_score==null?"—":Number(o.brier_score).toFixed(5))+" / "+(o.market_brier_score==null?"—":Number(o.market_brier_score).toFixed(5)));
   put("bioExpansion","Last graph expansion: "+fmtTime(m.last_expansion_at));
-  put("bioMessage",d.message||"Telemetry loaded from persistent reservoir tables.");
+  const freshness=d.freshness||{};const wf=freshness.worker_heartbeat||{};const sf=freshness.source_snapshot||{};put("bioMessage",(d.message||"Telemetry loaded from persistent reservoir tables.")+" Worker heartbeat: "+(wf.status||"UNAVAILABLE")+"; source snapshot: "+(sf.status||"UNAVAILABLE")+".");
   const body=el("bioRows");body.replaceChildren();const rows=Array.isArray(d.recent)?d.recent:[];
   if(!rows.length){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=14;td.className="empty";td.textContent="No reservoir observations recorded yet";tr.appendChild(td);body.appendChild(tr)}
   rows.forEach(x=>{const tr=document.createElement("tr");const q=x.btc_quotes||{};const qfmt=s=>{const v=q[s];if(!v)return s+": —";const bid=v.bid_usd==null?"—":usd(v.bid_usd),ask=v.ask_usd==null?"—":usd(v.ask_usd),age=v.quote_age_seconds==null?"—":Math.round(Number(v.quote_age_seconds))+"s";return s+": "+bid+" / "+ask+" · "+age};const exchangeQuotes=["coinbase","kraken","binance"].map(qfmt).join(" | ");const depthNum=v=>v==null||!Number.isFinite(Number(v))?"—":Number(v).toLocaleString("en-US",{maximumFractionDigits:4});const depth="Bid "+depthNum(x.market_bid_depth)+" / Ask "+depthNum(x.market_ask_depth)+" · Imbalance "+(x.market_depth_imbalance==null?"—":Number(x.market_depth_imbalance).toFixed(3));const vals=[fmtTime(x.captured_at),x.timeframe||"—",x.checkpoint||"continuous",x.market_slug||"—",x.forecast_direction||"—",x.probability_up==null?"—":(100*Number(x.probability_up)).toFixed(1)+"%",x.probability_up==null?"—":(100*(1-Number(x.probability_up))).toFixed(1)+"%",x.price_to_beat==null?"—":usd(x.price_to_beat),x.market_midpoint==null?"—":Number(x.market_midpoint).toFixed(4),depth,exchangeQuotes,x.outcome||"PENDING",x.brier_score==null?"—":Number(x.brier_score).toFixed(5),x.learning_update_applied?"YES":"—"];vals.forEach(v=>{const td=document.createElement("td");td.textContent=String(v);tr.appendChild(td)});body.appendChild(tr)});
@@ -155,122 +159,292 @@ async function refreshLiveQuotes(){
 async function refreshVerifiedContracts(){
  try{
   const r=await fetch("/api/verified-contracts?ts="+Date.now(),{cache:"no-store"});const d=await r.json();if(!r.ok)throw new Error(d.message||("HTTP "+r.status));
-  const m=d.metrics||{};put("verifiedCount",m.verified??0);put("verifiedCorrect",m.correct==null?"—":m.correct+" / "+(m.verified??0));put("verifiedAccuracy",m.accuracy_pct==null?"—":Number(m.accuracy_pct).toFixed(1)+"%");put("verifiedBrier",m.mean_brier==null?"—":Number(m.mean_brier).toFixed(5));put("verifiedLast",fmtTime(m.last_verified_at));
+  const m=d.metrics||{};put("verifiedCount",m.verified??0);put("verifiedCorrect","Pending approval");put("verifiedAccuracy",m.accuracy_status==="UNAVAILABLE_POLICY_PENDING"?"Unavailable · scoring policy pending":"—");put("verifiedBrier","Unavailable pending policy");put("verifiedLast",fmtTime(m.last_verified_at));
   const body=el("verifiedRows");body.replaceChildren();const rows=Array.isArray(d.contracts)?d.contracts:[];
-  if(!rows.length){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=13;td.className="empty";td.textContent="No explicitly verified reservoir outcomes yet. Pending contracts are intentionally excluded.";tr.appendChild(td);body.appendChild(tr)}
-  rows.forEach(x=>{const tr=document.createElement("tr");const vals=[x.market_slug||"—",x.timeframe||"—",x.checkpoint||"—",x.forecast_direction||"—",x.probability_up==null?"—":(100*Number(x.probability_up)).toFixed(1)+"%",x.outcome||"—",x.correct==null?"—":(x.correct?"YES":"NO"),x.brier_score==null?"—":Number(x.brier_score).toFixed(5),x.learning_update_applied?"APPLIED":"NOT APPLIED",fmtTime(x.learning_applied_at),x.model_version==null?"—":"v"+x.model_version,x.settlement_source||"Explicit settlement recorded",fmtTime(x.verified_at)];vals.forEach(v=>{const td=document.createElement("td");td.textContent=String(v);tr.appendChild(td)});body.appendChild(tr)});
+  if(!rows.length){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=5;td.className="empty";td.textContent="No explicitly verified reservoir outcomes yet. Pending contracts are intentionally excluded.";tr.appendChild(td);body.appendChild(tr)}
+  rows.forEach(x=>{const tr=document.createElement("tr");const vals=[x.market_slug||"—",x.timeframe||"—",x.outcome||"—",x.settlement_source||"Explicit settlement recorded",fmtTime(x.verified_at)];vals.forEach(v=>{const td=document.createElement("td");td.textContent=String(v);tr.appendChild(td)});body.appendChild(tr)});
   put("verifiedRefresh","Updated "+new Date().toLocaleTimeString("en-US",{timeZone:"America/New_York"})+" ET");
  }catch(e){put("verifiedRefresh","Could not load verified outcomes: "+String(e.message||e))}
 }
-clock();setInterval(clock,1000);refreshReservoir();setInterval(refreshReservoir,10000);refreshLiveQuotes();setInterval(refreshLiveQuotes,5000);refreshVerifiedContracts();setInterval(refreshVerifiedContracts,15000);
+async function refreshSignalHistory(){
+ try{
+  const r=await fetch("/api/reservoir-signal-history?ts="+Date.now(),{cache:"no-store"});const d=await r.json();if(!r.ok)throw new Error(d.message||("HTTP "+r.status));
+  const body=el("signalHistoryRows");body.replaceChildren();const rows=Array.isArray(d.contracts)?d.contracts:[];
+  if(!rows.length){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=9;td.className="empty";td.textContent=d.status==="SCHEMA NOT INITIALIZED"?"Reservoir observation schema is not initialized.":"No persisted contract forecasts yet.";tr.appendChild(td);body.appendChild(tr)}
+  rows.forEach(x=>{const tr=document.createElement("tr");const vals=[x.market_slug||"—",fmtTime(x.captured_at),x.timeframe||"—",x.checkpoint||"continuous",x.forecast_direction||"NO SIGNAL",x.probability_up==null?"—":(100*Number(x.probability_up)).toFixed(1)+"%",x.outcome||"PENDING",x.outcome_verified?"YES":"NO",x.brier_score==null?"—":Number(x.brier_score).toFixed(5)];vals.forEach(v=>{const td=document.createElement("td");td.textContent=String(v);tr.appendChild(td)});body.appendChild(tr)});
+  put("signalHistoryRefresh","Updated "+new Date().toLocaleTimeString("en-US",{timeZone:"America/New_York"})+" ET · "+rows.length+" forecasts");
+ }catch(e){put("signalHistoryRefresh","Could not load signal history: "+String(e.message||e))}
+}
+clock();setInterval(clock,1000);refreshReservoir();setInterval(refreshReservoir,10000);refreshLiveQuotes();setInterval(refreshLiveQuotes,5000);refreshVerifiedContracts();setInterval(refreshVerifiedContracts,15000);refreshSignalHistory();setInterval(refreshSignalHistory,15000);
 </script></body></html>"""
+
+
+def _reservoir_columns(conn, table_name):
+    """Return actual public-table columns; missing telemetry is a supported state."""
+    rows = conn.execute("""
+        SELECT column_name FROM information_schema.columns
+        WHERE table_schema='public' AND table_name=%s
+    """, (table_name,)).fetchall()
+    return {row["column_name"] for row in rows}
+
+
+def _freshness(timestamp, *, now=None, fresh_seconds=30, recent_seconds=180):
+    """Describe a timestamp without substituting unrelated timestamps for missing telemetry."""
+    now = now or datetime.now().astimezone()
+    if timestamp is None:
+        return {"status": "UNAVAILABLE", "timestamp": None, "age_seconds": None}
+    age = max(0, (now - timestamp.astimezone()).total_seconds())
+    status = "FRESH" if age <= fresh_seconds else "RECENT" if age <= recent_seconds else "STALE"
+    return {"status": status, "timestamp": timestamp, "age_seconds": round(age, 1)}
 
 
 @app.get("/api/biological-reservoir")
 def biological_reservoir_status():
-    """Read persisted status for the separate Biological Reservoir research worker."""
+    """Read independent worker, source, observation, and directional-signal freshness."""
     url = os.getenv("CONNECTOME_DATABASE_URL")
     if not url:
-        return jsonify({"ok": False, "status": "NOT CONFIGURED", "message": "CONNECTOME_DATABASE_URL is not set on this dashboard service.", "model": None, "observations": {}, "recent": []}), 503
+        return jsonify({"ok": False, "status": "NOT CONFIGURED",
+                        "message": "CONNECTOME_DATABASE_URL is not set on this dashboard service.",
+                        "model": None, "observations": {}, "recent": [], "freshness": {}}), 503
     try:
         import psycopg
         from psycopg.rows import dict_row
         with psycopg.connect(url, connect_timeout=4, row_factory=dict_row) as conn:
-            ready = conn.execute("SELECT to_regclass('public.biological_reservoir_model_state') AS model_table, to_regclass('public.biological_reservoir_observations') AS obs_table").fetchone()
+            ready = conn.execute("""
+                SELECT to_regclass('public.biological_reservoir_model_state') AS model_table,
+                       to_regclass('public.biological_reservoir_observations') AS obs_table
+            """).fetchone()
             if not ready["model_table"] or not ready["obs_table"]:
-                return jsonify({"ok": True, "status": "INITIALIZING", "message": "Dashboard is connected; telemetry tables are not initialized yet. Status will update when the worker creates them.", "model": None, "observations": {}, "recent": []})
-            model = conn.execute("""SELECT model_version, graph_snapshot, graph_hash,
-                jsonb_array_length(node_ids) AS node_count, edge_count, learning_updates,
-                last_snapshot_id, last_expansion_at, updated_at
-                FROM biological_reservoir_model_state WHERE id=1""").fetchone()
+                return jsonify({"ok": True, "status": "INITIALIZING",
+                    "message": "Connected; Reservoir telemetry tables are not initialized.",
+                    "model": None, "observations": {}, "recent": [], "freshness": {
+                        "worker_heartbeat": {"status": "UNAVAILABLE", "timestamp": None, "age_seconds": None},
+                        "source_snapshot": {"status": "UNAVAILABLE", "timestamp": None, "age_seconds": None}}})
+            model_columns = _reservoir_columns(conn, "biological_reservoir_model_state")
+            heartbeat_expr = "worker_heartbeat_at" if "worker_heartbeat_at" in model_columns else "NULL::timestamptz AS worker_heartbeat_at"
+            source_expr = "source_snapshot_at" if "source_snapshot_at" in model_columns else "NULL::timestamptz AS source_snapshot_at"
+            model = conn.execute(f"""
+                SELECT model_version, graph_snapshot, graph_hash,
+                    jsonb_array_length(node_ids) AS node_count, edge_count, learning_updates,
+                    last_snapshot_id, last_expansion_at, updated_at,
+                    {heartbeat_expr}, {source_expr}
+                FROM biological_reservoir_model_state WHERE id=1
+            """).fetchone()
             if not model:
-                return jsonify({"ok": True, "status": "INITIALIZING", "message": "Reservoir model state row has not been created yet.", "model": None, "observations": {}, "recent": []})
-            stats = conn.execute("""SELECT count(*) AS total, max(captured_at) AS latest_at,
-                max(snapshot_id) AS latest_snapshot_id,
-                count(*) FILTER (WHERE outcome IS NOT NULL) AS settled,
-                count(*) FILTER (WHERE outcome IS NOT NULL AND upper(forecast_direction)=upper(outcome)) AS correct,
-                avg(brier_score) FILTER (WHERE brier_score IS NOT NULL) AS brier_score,
-                count(*) FILTER (WHERE learning_update_applied) AS learning_updates
-                FROM biological_reservoir_observations""").fetchone()
-            market = conn.execute("""SELECT avg(power(market_midpoint -
-                CASE WHEN upper(outcome)='UP' THEN 1.0 ELSE 0.0 END, 2)) AS score
-                FROM biological_reservoir_observations WHERE outcome IS NOT NULL""").fetchone()
-            recent = conn.execute("""SELECT snapshot_id, market_slug, captured_at, details->>'contract_timeframe' AS timeframe, checkpoint,
-                forecast_direction, probability_up,
-                NULLIF(details->'contract_timeline'->'current_contract'->>'reference_price','')::double precision AS price_to_beat,
-                market_midpoint, market_bid_depth, market_ask_depth, market_depth_imbalance, order_book_levels, outcome, brier_score,
-                learning_update_applied, details->'btc_feed_asof'->'samples' AS btc_quotes
+                return jsonify({"ok": True, "status": "INITIALIZING",
+                    "message": "Reservoir model state row has not been created yet.",
+                    "model": None, "observations": {}, "recent": [], "freshness": {
+                        "worker_heartbeat": {"status": "UNAVAILABLE", "timestamp": None, "age_seconds": None},
+                        "source_snapshot": {"status": "UNAVAILABLE", "timestamp": None, "age_seconds": None}}})
+            stats = conn.execute("""
+                SELECT count(*) AS total, max(captured_at) AS latest_at,
+                    max(snapshot_id) AS latest_snapshot_id,
+                    count(*) FILTER (WHERE outcome IN ('UP','DOWN')
+                        AND forecast_direction IN ('UP','DOWN')) AS settled_directional,
+                    count(*) FILTER (WHERE outcome IN ('UP','DOWN')
+                        AND forecast_direction IN ('UP','DOWN')
+                        AND upper(forecast_direction)=upper(outcome)) AS correct_directional,
+                    avg(brier_score) FILTER (WHERE brier_score IS NOT NULL) AS brier_score,
+                    count(*) FILTER (WHERE learning_update_applied) AS learning_updates
                 FROM biological_reservoir_observations
-                ORDER BY captured_at DESC, snapshot_id DESC LIMIT 30""").fetchall()
-        settled = int(stats["settled"] or 0)
-        # Use whichever persisted heartbeat is newer: model-state writes can lag
-        # while the worker continues appending observation snapshots.
-        timestamps = [value for value in (model["updated_at"], stats["latest_at"]) if value is not None]
-        latest = max(timestamps) if timestamps else None
-        age = max(0, (datetime.now().astimezone() - latest.astimezone()).total_seconds()) if latest else None
-        status = "WORKING" if age is not None and age <= 30 else "RECENT ACTIVITY" if age is not None and age <= 180 else "STALE" if age is not None else "INITIALIZING"
-        return jsonify({"ok": True, "status": status, "research_only": True, "live_trading_enabled": False,
-            "model": model, "observations": {"total": int(stats["total"] or 0),
-            "latest_at": stats["latest_at"], "latest_snapshot_id": stats["latest_snapshot_id"],
-            "settled": settled, "accuracy_pct": round(100 * int(stats["correct"] or 0) / settled, 2) if settled else None,
-            "brier_score": round(float(stats["brier_score"]), 5) if stats["brier_score"] is not None else None,
-            "market_brier_score": round(float(market["score"]), 5) if market["score"] is not None else None,
-            "learning_updates": int(stats["learning_updates"] or 0)}, "recent": recent,
-            "message": "Research/paper forecasts only. Accuracy counts only resolved outcomes; learning counts persisted updates."})
+                WHERE COALESCE(details->>'fixture_key','')=''
+                  AND COALESCE(details->>'is_synthetic','false') <> 'true'
+            """).fetchone()
+            market = conn.execute("""
+                SELECT avg(power(market_midpoint -
+                    CASE WHEN upper(outcome)='UP' THEN 1.0 ELSE 0.0 END, 2)) AS score
+                FROM biological_reservoir_observations
+                WHERE outcome IN ('UP','DOWN')
+                  AND COALESCE(details->>'fixture_key','')=''
+                  AND COALESCE(details->>'is_synthetic','false') <> 'true'
+            """).fetchone()
+            recent = conn.execute("""
+                SELECT snapshot_id, market_slug, captured_at,
+                    details->>'contract_timeframe' AS timeframe, checkpoint,
+                    forecast_direction, probability_up,
+                    NULLIF(details->'contract_timeline'->'current_contract'->>'reference_price','')::double precision AS price_to_beat,
+                    market_midpoint, market_bid_depth, market_ask_depth, market_depth_imbalance,
+                    order_book_levels, outcome, brier_score, learning_update_applied,
+                    details->'btc_feed_asof'->'samples' AS btc_quotes
+                FROM biological_reservoir_observations
+                WHERE COALESCE(details->>'fixture_key','')=''
+                  AND COALESCE(details->>'is_synthetic','false') <> 'true'
+                ORDER BY captured_at DESC, snapshot_id DESC LIMIT 30
+            """).fetchall()
+            history = conn.execute("""
+                WITH ranked AS (
+                    SELECT snapshot_id, market_slug, captured_at,
+                        details->>'contract_timeframe' AS timeframe, checkpoint,
+                        forecast_direction, probability_up, outcome, brier_score,
+                        (details->>'outcome_verified'='true'
+                         AND details ? 'settlement_source'
+                         AND outcome IN ('UP','DOWN')) AS outcome_verified,
+                        row_number() OVER (PARTITION BY market_slug
+                            ORDER BY captured_at DESC, snapshot_id DESC) AS contract_row
+                    FROM biological_reservoir_observations
+                    WHERE market_slug IS NOT NULL
+                      AND COALESCE(details->>'fixture_key','')=''
+                      AND COALESCE(details->>'is_synthetic','false') <> 'true'
+                )
+                SELECT * FROM ranked WHERE contract_row <= 5
+                ORDER BY captured_at DESC, snapshot_id DESC LIMIT 200
+            """).fetchall()
+        worker_freshness = _freshness(model["worker_heartbeat_at"])
+        source_freshness = _freshness(model["source_snapshot_at"])
+        observation_freshness = _freshness(stats["latest_at"])
+        signal_time = next((row["captured_at"] for row in recent
+                            if row.get("forecast_direction") in ("UP", "DOWN")), None)
+        signal_freshness = _freshness(signal_time)
+        schema_complete = ("worker_heartbeat_at" in model_columns and "source_snapshot_at" in model_columns)
+        worker_status = worker_freshness["status"] if schema_complete else "SCHEMA INCOMPLETE"
+        overall = ("WORKING" if worker_status == "FRESH" else
+                   "RECENT ACTIVITY" if worker_status == "RECENT" else
+                   "STALE" if worker_status == "STALE" else
+                   "TELEMETRY SCHEMA INCOMPLETE" if not schema_complete else "WORKER STATUS UNAVAILABLE")
+        settled = int(stats["settled_directional"] or 0)
+        correct = int(stats["correct_directional"] or 0)
+        return jsonify({"ok": True, "status": overall, "research_only": True, "live_trading_enabled": False,
+            "model": model, "freshness": {
+                "worker_heartbeat": worker_freshness,
+                "source_snapshot": source_freshness,
+                "model_observation": observation_freshness,
+                "trade_signal": signal_freshness,
+                "telemetry_schema_complete": schema_complete},
+            "observations": {"total": int(stats["total"] or 0),
+                "latest_at": stats["latest_at"], "latest_snapshot_id": stats["latest_snapshot_id"],
+                "settled": settled, "correct": None,
+                "accuracy_status": "UNAVAILABLE_POLICY_PENDING",
+                "accuracy_denominator": "not scored; contract scoring unit and forecast-selection rule require approval",
+                "accuracy_pct": None,
+                "brier_score": round(float(stats["brier_score"]), 5) if stats["brier_score"] is not None else None,
+                "market_brier_score": round(float(market["score"]), 5) if market["score"] is not None else None,
+                "learning_updates": int(stats["learning_updates"] or 0)},
+            "verified_metrics": {
+                "accuracy_pct": None,
+                "accuracy_status": "UNAVAILABLE_POLICY_PENDING",
+                "accuracy_denominator": "not scored; scoring unit and forecast-selection rule require approval",
+            },
+            "recent": recent, "signal_history": history,
+            "message": ("Worker heartbeat and source freshness are separate. Missing telemetry columns are not inferred from model writes or observations. "
+                        "Research/paper forecasts only; live trading is hard-blocked.")})
     except Exception as exc:
         logging.exception("Biological Reservoir telemetry endpoint failed")
-        return jsonify({"ok": False, "status": "ERROR", "message": type(exc).__name__ + ": " + str(exc), "model": None, "observations": {}, "recent": []}), 500
+        return jsonify({"ok": False, "status": "ERROR", "message": type(exc).__name__ + ": " + str(exc),
+                        "model": None, "observations": {}, "recent": [], "freshness": {}}), 500
 
 
 @app.get("/api/verified-contracts")
 def verified_contracts():
-    """List only reservoir records carrying an explicit verified UP/DOWN outcome."""
+    """Return explicit verified outcomes without selecting forecasts or computing accuracy."""
     url = os.getenv("CONNECTOME_DATABASE_URL")
     if not url:
-        return jsonify({"ok": False, "message": "CONNECTOME_DATABASE_URL is not configured.", "metrics": {}, "contracts": []}), 503
+        return jsonify({"ok": False, "message": "CONNECTOME_DATABASE_URL is not configured.",
+                        "metrics": {}, "contracts": []}), 503
+    try:
+        import psycopg
+        from psycopg.rows import dict_row
+        with psycopg.connect(url, connect_timeout=4, row_factory=dict_row) as conn:
+            exists = conn.execute(
+                "SELECT to_regclass('public.biological_reservoir_observations') AS obs_table"
+            ).fetchone()
+            if not exists or not exists["obs_table"]:
+                return jsonify({
+                    "ok": True,
+                    "metrics": {"verified": 0, "accuracy_pct": None,
+                                "accuracy_status": "UNAVAILABLE_POLICY_PENDING",
+                                "last_verified_at": None},
+                    "scoring_policy": {"status": "UNAPPROVED", "unit": None, "forecast_selection": None},
+                    "contracts": [],
+                })
+            metrics = conn.execute("""
+                SELECT count(DISTINCT market_slug) AS verified,
+                       max(NULLIF(details->>'settled_at','')::timestamptz) AS last_verified_at
+                FROM biological_reservoir_observations
+                WHERE market_slug IS NOT NULL
+                  AND outcome IN ('UP','DOWN')
+                  AND details->>'outcome_verified'='true'
+                  AND details ? 'settlement_source'
+                  AND COALESCE(details->>'fixture_key','')=''
+                  AND COALESCE(details->>'is_synthetic','false') <> 'true'
+            """).fetchone()
+            rows = conn.execute("""
+                WITH verified_outcomes AS (
+                    SELECT DISTINCT ON (market_slug)
+                        market_slug,
+                        details->>'contract_timeframe' AS timeframe,
+                        outcome,
+                        details->>'settlement_source' AS settlement_source,
+                        NULLIF(details->>'settled_at','')::timestamptz AS verified_at,
+                        captured_at
+                    FROM biological_reservoir_observations
+                    WHERE market_slug IS NOT NULL
+                      AND outcome IN ('UP','DOWN')
+                      AND details->>'outcome_verified'='true'
+                      AND details ? 'settlement_source'
+                      AND COALESCE(details->>'fixture_key','')=''
+                      AND COALESCE(details->>'is_synthetic','false') <> 'true'
+                    ORDER BY market_slug,
+                        NULLIF(details->>'settled_at','')::timestamptz DESC NULLS LAST,
+                        captured_at DESC, snapshot_id DESC
+                )
+                SELECT market_slug, timeframe, outcome, settlement_source, verified_at
+                FROM verified_outcomes
+                ORDER BY verified_at DESC NULLS LAST, market_slug
+                LIMIT 200
+            """).fetchall()
+        return jsonify({
+            "ok": True, "research_only": True, "live_trading_enabled": False,
+            "metrics": {
+                "verified": int(metrics["verified"] or 0),
+                "accuracy_pct": None,
+                "accuracy_status": "UNAVAILABLE_POLICY_PENDING",
+                "accuracy_denominator": "not scored; contract scoring unit and forecast-selection rule require approval",
+                "last_verified_at": metrics["last_verified_at"],
+            },
+            "scoring_policy": {"status": "UNAPPROVED", "unit": None, "forecast_selection": None},
+            "contracts": rows,
+        })
+    except Exception as exc:
+        logging.exception("Verified Reservoir outcomes endpoint failed")
+        return jsonify({"ok": False, "message": type(exc).__name__ + ": " + str(exc),
+                        "metrics": {}, "contracts": []}), 500
+
+
+@app.get("/api/reservoir-signal-history")
+def reservoir_signal_history():
+    """Return bounded per-contract forecast history, including pending but not synthetic records."""
+    url = os.getenv("CONNECTOME_DATABASE_URL")
+    if not url:
+        return jsonify({"ok": False, "message": "CONNECTOME_DATABASE_URL is not configured.", "contracts": []}), 503
     try:
         import psycopg
         from psycopg.rows import dict_row
         with psycopg.connect(url, connect_timeout=4, row_factory=dict_row) as conn:
             exists = conn.execute("SELECT to_regclass('public.biological_reservoir_observations') AS obs_table").fetchone()
             if not exists or not exists["obs_table"]:
-                return jsonify({"ok": True, "metrics": {"verified": 0, "correct": 0, "accuracy_pct": None, "mean_brier": None, "last_verified_at": None}, "contracts": []})
-            metrics = conn.execute("""
-                SELECT count(*) AS verified,
-                       count(*) FILTER (WHERE upper(forecast_direction)=upper(outcome)) AS correct,
-                       avg(brier_score) FILTER (WHERE brier_score IS NOT NULL) AS mean_brier,
-                       max(NULLIF(details->>'settled_at','')::timestamptz) AS last_verified_at
-                FROM biological_reservoir_observations
-                WHERE outcome IN ('UP','DOWN') AND details->>'outcome_verified'='true' AND details ? 'settlement_source'
-            """).fetchone()
+                return jsonify({"ok": True, "status": "SCHEMA NOT INITIALIZED", "contracts": []})
             rows = conn.execute("""
-                SELECT o.market_slug, o.captured_at, o.checkpoint, o.forecast_direction,
-                       o.probability_up, o.outcome, o.brier_score, o.learning_update_applied,
-                       o.details->>'learning_applied_at' AS learning_applied_at,
-                       NULLIF(o.details->>'reservoir_model_version', '')::integer AS model_version,
-                       o.details->>'settlement_source' AS settlement_source,
-                       NULLIF(o.details->>'settled_at','')::timestamptz AS verified_at,
-                       o.details->>'contract_timeframe' AS timeframe,
-                       (upper(o.forecast_direction)=upper(o.outcome)) AS correct
-                FROM biological_reservoir_observations o
-                WHERE o.outcome IN ('UP','DOWN') AND o.details->>'outcome_verified'='true' AND o.details ? 'settlement_source'
-                ORDER BY NULLIF(o.details->>'settled_at','')::timestamptz DESC NULLS LAST,
-                         o.captured_at DESC
-                LIMIT 200
+                WITH ranked AS (
+                    SELECT snapshot_id, market_slug, captured_at,
+                        details->>'contract_timeframe' AS timeframe, checkpoint,
+                        forecast_direction, probability_up, outcome, brier_score,
+                        (details->>'outcome_verified'='true' AND details ? 'settlement_source'
+                         AND outcome IN ('UP','DOWN')) AS outcome_verified,
+                        row_number() OVER (PARTITION BY market_slug
+                            ORDER BY captured_at DESC, snapshot_id DESC) AS history_rank
+                    FROM biological_reservoir_observations
+                    WHERE market_slug IS NOT NULL
+                      AND COALESCE(details->>'fixture_key','')=''
+                      AND COALESCE(details->>'is_synthetic','false') <> 'true'
+                )
+                SELECT * FROM ranked WHERE history_rank <= 5
+                ORDER BY captured_at DESC, snapshot_id DESC LIMIT 200
             """).fetchall()
-        n = int(metrics["verified"] or 0)
-        correct = int(metrics["correct"] or 0)
         return jsonify({"ok": True, "research_only": True, "live_trading_enabled": False,
-            "metrics": {"verified": n, "correct": correct,
-                "accuracy_pct": round(100 * correct / n, 2) if n else None,
-                "mean_brier": round(float(metrics["mean_brier"]), 5) if metrics["mean_brier"] is not None else None,
-                "last_verified_at": metrics["last_verified_at"]},
-            "contracts": rows})
+                        "history_per_contract": 5, "contracts": rows})
     except Exception as exc:
-        logging.exception("Verified contracts endpoint failed")
-        return jsonify({"ok": False, "message": type(exc).__name__ + ": " + str(exc),
-                        "metrics": {}, "contracts": []}), 500
-
+        logging.exception("Reservoir signal history endpoint failed")
+        return jsonify({"ok": False, "message": type(exc).__name__ + ": " + str(exc), "contracts": []}), 500
 
 def _get_json(url, timeout=4, headers=None):
     """Fetch a small public market-data JSON response without adding dependencies."""
