@@ -1,0 +1,19 @@
+# Track B stays disabled until a verified provider and shared PostgreSQL adapter
+# are integrated and tested in the existing worker.
+signal_oracle:
+  enabled: false
+  paper_only: true
+  strategy_id: signal_oracle
+  strategy_version: oracle-logistic-head-v1
+  feature_schema: oracle-eight-features-v1
+  rolling_accuracy_window: 100
+  input_freshness_seconds: 120
+  bankroll: 1000.0
+  stake: 5.0
+  max_open_positions: 1
+  entry_cutoff_seconds: 60
+  max_retries: 1
+  network_timeout_seconds: 4
+  require_verified_polymarket_us_contract: true
+  require_executable_quote: true
+  shared_database_env: CONNECTOME_DATABASE_URL

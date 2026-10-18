@@ -101,6 +101,22 @@ h1{font-size:clamp(1.5rem,4vw,2.2rem);line-height:1.15;margin:0 0 8px;letter-spa
  </div>
  <div class="table-wrap"><table><thead><tr><th>Contract</th><th>Timeframe</th><th>Checkpoint</th><th>Forecast</th><th>UP probability</th><th>Verified outcome</th><th>Correct</th><th>Brier</th><th>Learning update</th><th>Update applied at</th><th>Model version</th><th>Settlement source</th><th>Verified at</th></tr></thead><tbody id="verifiedRows"><tr><td colspan="13" class="empty">Loading verified contracts…</td></tr></tbody></table></div>
 </div></section>
+<section class="section panel"><div class="panel-inner">
+ <div class="section-head"><h2>Track B — Signal Oracle</h2><span id="oracleStatus" class="badge warn">CHECKING</span></div>
+ <p class="small"><strong>PAPER DIRECTION SIMULATION</strong> · <span id="oracleMode">Research-only</span></p>
+ <p class="small" id="oracleMessage">Loading persisted Oracle status…</p>
+ <div class="cards" style="margin-top:12px">
+  <article class="card"><div class="metric-label">Current signal</div><div class="metric" id="oracleSignal">NO TRADE</div><div class="metric-sub" id="oracleReason">Waiting for worker status</div></article>
+  <article class="card"><div class="metric-label">Oracle paper PTB — Binance</div><div class="metric" id="oraclePtb">N/A</div><div class="metric-sub" id="oraclePtbTime">Window-open benchmark; not official Polymarket PTB</div></article>
+  <article class="card"><div class="metric-label">Current Binance BTCUSDT</div><div class="metric" id="oracleCurrent">N/A</div><div class="metric-sub" id="oracleCurrentTime">Quote timestamp unavailable</div></article>
+  <article class="card"><div class="metric-label">Window</div><div class="metric" id="oracleWindow">N/A</div><div class="metric-sub" id="oracleWindowEnd">End unavailable</div></article>
+  <article class="card"><div class="metric-label">Latest 100 — Binance direction accuracy</div><div class="metric" id="oracleRolling">N/A</div><div class="metric-sub" id="oracleRollingCounts">0 correct / 0 incorrect / 0 eligible</div></article>
+  <article class="card"><div class="metric-label">Lifetime direction accuracy</div><div class="metric" id="oracleLifetime">N/A</div><div class="metric-sub" id="oracleLifetimeCounts">0 correct / 0 incorrect / 0 eligible</div></article>
+  <article class="card"><div class="metric-label">Prediction state counts</div><div class="metric" id="oracleCounts">Pending 0 · Ties 0 · Excluded 0</div><div class="metric-sub" id="oracleWorker">Worker heartbeat unavailable</div></article>
+  <article class="card"><div class="metric-label">Contract execution / P&amp;L</div><div class="metric">N/A</div><div class="metric-sub">No verified contract quotes or fills; Binance direction is not contract P&amp;L.</div></article>
+ </div>
+ <p class="small">Benchmark: Binance window-open benchmark; not official Polymarket PTB. Official Polymarket US PTB provenance remains separate and unchanged. Live order submission is prohibited.</p>
+</div></section>
 <p class="foot">This dashboard reads only the Biological Reservoir research tables. It does not start or control the Polymarket arbitrage bot. All activity is research-only; live trading is hard-blocked.</p>
 </main>
 <script>
@@ -197,8 +213,76 @@ async function refreshVerifiedContracts(){
   put("verifiedRefresh","Updated "+new Date().toLocaleTimeString("en-US",{timeZone:"America/New_York"})+" ET");
  }catch(e){put("verifiedRefresh","Could not load verified outcomes: "+String(e.message||e))}
 }
-clock();setInterval(clock,1000);refreshReservoir();setInterval(refreshReservoir,10000);refreshLiveQuotes();setInterval(refreshLiveQuotes,5000);refreshVerifiedContracts();setInterval(refreshVerifiedContracts,15000);
+async function refreshOracle(){
+ const badge=el("oracleStatus");
+ try{
+  const r=await fetch("/api/track-b/signal-oracle?ts="+Date.now(),{cache:"no-store"});
+  const d=await r.json();
+  if(!r.ok)throw new Error(d.message||("HTTP "+r.status));
+  const w=d.window||{},m=d.metrics||{},latest=d.latest||{},worker=d.worker||{};
+  put("oracleStatus",d.worker_status||d.status||"INITIALIZING");
+  if(badge)badge.className="badge "+(["WORKING"].includes(d.worker_status)?"good":["STALE","ERROR","unavailable"].includes(d.worker_status)?"bad":"warn");
+  put("oracleMode",d.mode||"PAPER DIRECTION SIMULATION");
+  put("oracleMessage",d.message||"Persisted Binance direction benchmark. No contract execution or P&L is inferred.");
+  put("oracleSignal",w.current_signal||latest.action||"NO TRADE");
+  put("oracleReason",w.current_signal_reason||latest.reason||"No scored prediction yet");
+  put("oraclePtb",w.benchmark_price==null?"N/A":Number(w.benchmark_price).toLocaleString("en-US")+" USDT/BTC");
+  put("oraclePtbTime",w.benchmark_source_timestamp?"Candle open: "+fmtTime(w.benchmark_source_timestamp)+" · acquired: "+fmtTime(w.benchmark_acquired_at):"Benchmark unavailable"+(w.benchmark_reason?": "+w.benchmark_reason:""));
+  put("oracleCurrent",w.current_price==null?"N/A":Number(w.current_price).toLocaleString("en-US")+" USDT/BTC");
+  put("oracleCurrentTime",w.current_price_timestamp?"Quote acquired: "+fmtTime(w.current_price_timestamp):"Quote timestamp unavailable");
+  put("oracleWindow",w.window_start?fmtTime(w.window_start):"N/A");
+  put("oracleWindowEnd",w.window_end?"Ends: "+fmtTime(w.window_end)+" · "+(w.candle_finalized?"RESOLVED":"PENDING"):"Window end unavailable");
+  put("oracleRolling",m.rolling_accuracy_pct==null?"N/A":m.rolling_accuracy_pct+"%");
+  put("oracleRollingCounts",m.rolling_correct+" correct / "+Math.max(0,m.rolling_total-m.rolling_correct)+" incorrect / "+m.rolling_total+" eligible");
+  put("oracleLifetime",m.lifetime_accuracy_pct==null?"N/A":m.lifetime_accuracy_pct+"%");
+  put("oracleLifetimeCounts",m.lifetime_correct+" correct / "+Math.max(0,m.lifetime_total-m.lifetime_correct)+" incorrect / "+m.lifetime_total+" eligible");
+  put("oracleCounts","Pending "+(m.pending_count??0)+" · Ties "+(m.tie_count??0)+" · Excluded "+(m.excluded_count??0));
+  put("oracleWorker","Heartbeat: "+(worker.heartbeat_at?fmtTime(worker.heartbeat_at):"N/A")+" · age "+(d.heartbeat_age_seconds==null?"N/A":Math.round(d.heartbeat_age_seconds)+"s")+" · version "+(w.strategy_version||latest.strategy_version||"oracle-logistic-head-v1"));
+ }catch(e){
+  put("oracleStatus","UNAVAILABLE");if(badge)badge.className="badge bad";
+  put("oracleMessage","Oracle data unavailable: "+String(e.message||e));
+  put("oracleRolling","N/A");put("oracleLifetime","N/A");
+ }
+}
+clock();setInterval(clock,1000);refreshReservoir();setInterval(refreshReservoir,10000);refreshLiveQuotes();setInterval(refreshLiveQuotes,5000);refreshVerifiedContracts();setInterval(refreshVerifiedContracts,15000);refreshOracle();setInterval(refreshOracle,10000);
 </script></body></html>"""
+
+
+@app.get("/api/track-b/signal-oracle")
+def signal_oracle_status():
+    """Read Track B's shared durable store; never start or mutate the worker here."""
+    url = os.getenv("CONNECTOME_DATABASE_URL")
+    empty_metrics = {
+        "rolling_window": 100, "rolling_correct": 0, "rolling_total": 0,
+        "rolling_accuracy_pct": None, "lifetime_correct": 0, "lifetime_total": 0,
+        "lifetime_accuracy_pct": None, "pending_count": 0, "tie_count": 0,
+        "excluded_count": 0, "eligible_count": 0,
+    }
+    if not url:
+        return jsonify({"ok": False, "status": "NOT CONFIGURED",
+            "message": "CONNECTOME_DATABASE_URL is not configured on the dashboard service.",
+            "worker_status": "ERROR", "metrics": empty_metrics, "window": None, "latest": None}), 503
+    try:
+        import psycopg
+        from psycopg.rows import dict_row
+        with psycopg.connect(url, connect_timeout=4, row_factory=dict_row) as conn:
+            tables = conn.execute("""SELECT
+                to_regclass('public.signal_oracle_windows') AS windows,
+                to_regclass('public.signal_oracle_predictions') AS predictions,
+                to_regclass('public.signal_oracle_worker_state') AS worker_state""").fetchone()
+        if not tables or not all(tables[key] for key in ("windows", "predictions", "worker_state")):
+            return jsonify({"ok": True, "status": "INITIALIZING", "worker_status": "INITIALIZING",
+                "track": "Track B — Signal Oracle", "mode": "PAPER DIRECTION SIMULATION",
+                "message": "Oracle tables are not initialized. The reviewed migration proposal has not been applied.",
+                "metrics": empty_metrics, "window": None, "latest": None, "worker": None,
+                "heartbeat_age_seconds": None, "paper_only": True, "live_trading_enabled": False})
+        from bot.signal_oracle_postgres import OraclePostgresStore
+        return jsonify(OraclePostgresStore(url).dashboard_payload())
+    except Exception as exc:
+        logging.exception("Signal Oracle dashboard endpoint failed")
+        return jsonify({"ok": False, "status": "ERROR", "worker_status": "ERROR",
+            "message": type(exc).__name__ + ": " + str(exc), "metrics": empty_metrics,
+            "window": None, "latest": None, "paper_only": True, "live_trading_enabled": False}), 503
 
 
 @app.get("/api/biological-reservoir")
@@ -347,7 +431,9 @@ def live_quotes():
     reference = next(({"source": name.upper(), "price": q.get("price"), "received_at": q.get("received_at")}
                       for name in ("binance", "coinbase", "kraken")
                       if (q := sources.get(name, {})).get("price") is not None), {})
-    candidate = acquire_official_price_to_beat()
+    # One short boundary retry keeps the UI responsive; longer retry
+    # policies belong in a background worker, never a 60-second HTTP request.
+    candidate = acquire_official_price_to_beat(retry_attempts=1, retry_interval=2.0)
     if candidate.get("status") == "unavailable":
         poly = candidate
     else:

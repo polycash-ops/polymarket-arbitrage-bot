@@ -1,7 +1,10 @@
 import unittest
 from datetime import datetime, timezone, timedelta
 
-from polymarket_us_ptb import acquire_official_price_to_beat, current_btc_15m_slug, current_btc_15m_window
+from polymarket_us_ptb import (
+    acquire_official_price_to_beat, current_btc_15m_slug,
+    current_btc_15m_window, polymarket_us_btc_15m_slug,
+)
 
 
 class OfficialPtbAcquisitionTests(unittest.TestCase):
@@ -21,8 +24,13 @@ class OfficialPtbAcquisitionTests(unittest.TestCase):
         }
 
     def test_slug_is_current_15_minute_utc_boundary(self):
-        self.assertEqual(self.slug, "btc-updown-15m-2026-10-18-1200z")
+        self.assertEqual(self.slug, "cpc-btc-updown-15m-2026-10-18-1200z")
         self.assertEqual(current_btc_15m_slug(self.now), self.slug)
+        self.assertEqual(polymarket_us_btc_15m_slug(self.start), self.slug)
+
+    def test_shared_us_slug_requires_exact_15_minute_boundary(self):
+        with self.assertRaisesRegex(ValueError, "exact 15-minute UTC boundary"):
+            polymarket_us_btc_15m_slug(self.start + timedelta(seconds=1))
 
     def test_reads_explicit_official_us_price_to_beat(self):
         urls = []
@@ -31,6 +39,7 @@ class OfficialPtbAcquisitionTests(unittest.TestCase):
         self.assertEqual(result["contract_id"], self.slug)
         self.assertEqual(result["price_to_beat"], 67234.56)
         self.assertEqual(result["source_field"], "market.assetPriceTerms.priceToBeat")
+        self.assertEqual(result["official_market"]["slug"], self.slug)
         self.assertEqual(len(urls), 1)
         self.assertIn(self.slug, urls[0])
 
@@ -43,7 +52,7 @@ class OfficialPtbAcquisitionTests(unittest.TestCase):
         ):
             with self.subTest(terms=terms):
                 market = {**self.market, "assetPriceTerms": terms}
-                result = acquire_official_price_to_beat(self.now, fetch_json=lambda url, market=market: {"market": market})
+                result = acquire_official_price_to_beat(self.now, fetch_json=lambda url, market=market: {"market": market}, retry_attempts=0)
                 self.assertEqual(result["status"], "unavailable")
                 self.assertIsNone(result["price_to_beat"])
 
@@ -65,6 +74,20 @@ class OfficialPtbAcquisitionTests(unittest.TestCase):
         result = acquire_official_price_to_beat(self.now, fetch_json=lambda url: (_ for _ in ()).throw(TimeoutError("test")))
         self.assertEqual(result["status"], "unavailable")
         self.assertIn("TimeoutError", result["reason"])
+
+
+    def test_retries_only_transient_missing_price_to_beat(self):
+        responses = []
+        empty = {**self.market, "assetPriceTerms": {**self.market["assetPriceTerms"], "priceToBeat": None}}
+        def fetch(url):
+            responses.append(url)
+            return {"market": empty if len(responses) == 1 else self.market}
+        sleeps = []
+        result = acquire_official_price_to_beat(self.now, fetch_json=fetch,
+            retry_attempts=1, retry_interval=0.25, sleep_fn=sleeps.append)
+        self.assertEqual(result["source"], "polymarket_us_official")
+        self.assertEqual(len(responses), 2)
+        self.assertEqual(sleeps, [0.25])
 
 
 if __name__ == "__main__":

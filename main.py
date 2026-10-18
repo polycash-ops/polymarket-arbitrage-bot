@@ -20,6 +20,9 @@ from bot.walk_forward import run_if_due as run_walk_forward_if_due, status as wa
 from bot.entry_timing import summarize as summarize_entry_timing
 from bot.readiness_model import build_report as build_readiness_report
 from bot.candidate_profiles import persist_with_graph as persist_candidate_profiles, load_latest as load_saved_candidate_profiles
+from bot.signal_oracle import STRATEGY_VERSION, encode_features, decide as decide_oracle
+from bot.signal_oracle_binance import fetch_window_candle, fetch_current_quote, research_window, entry_cutoff_open
+from bot.signal_oracle_postgres import OraclePostgresStore
 
 Path("logs").mkdir(parents=True, exist_ok=True)
 logging.basicConfig(
@@ -485,6 +488,7 @@ class TradingBot:
                 self.trade_executor.start(),
                 self._checkpoint_settlement_loop(),
                 self._status_loop(),
+                self._signal_oracle_loop(),
             )
         except asyncio.CancelledError:
             raise
@@ -496,6 +500,164 @@ class TradingBot:
     async def stop(self):
         await asyncio.gather(self.market_monitor.stop(), self.trade_executor.stop(), return_exceptions=True)
         logger.info("Connectome bot stopped")
+
+    async def _signal_oracle_loop(self):
+        """Independent Track B Binance direction simulation; errors never stop Track A."""
+        import math
+        from datetime import datetime, timezone
+        from canonical_resolver import resolve_price_to_beat
+        from polymarket_us_ptb import acquire_official_price_to_beat
+
+        entry_cutoff = max(0, int(os.getenv("SIGNAL_ORACLE_ENTRY_CUTOFF_SECONDS", "60")))
+        while True:
+            now = datetime.now(timezone.utc)
+            start, end = research_window(now)
+            try:
+                # The exact Binance candle open is the benchmark. The ticker is
+                # displayed separately and can never replace that benchmark.
+                candle = await asyncio.to_thread(
+                    fetch_window_candle, start, retry_attempts=1, retry_interval=1.0
+                )
+                try:
+                    quote = await asyncio.to_thread(fetch_current_quote)
+                    candle["current_price"] = quote["price"]
+                    candle["current_price_timestamp"] = quote["quote_timestamp"]
+                    candle["current_quote_timestamp_type"] = quote["quote_timestamp_type"]
+                except Exception as quote_exc:
+                    # A missing informational ticker must not invalidate the
+                    # independently verified exact-candle open benchmark.
+                    logger.warning("SIGNAL_ORACLE_CURRENT_TICKER_UNAVAILABLE: %s", quote_exc)
+                    candle["current_price"] = None
+                    candle["current_price_timestamp"] = None
+                    candle["current_quote_timestamp_type"] = None
+                # Refresh evaluation time after network acquisition so a slow
+                # startup/poll cannot issue a prediction beyond the cutoff.
+                now = datetime.now(timezone.utc)
+
+                # Only attach a Polymarket contract identity after the existing
+                # official US adapter and canonical resolver both validate it.
+                contract_id = None
+                contract_verified = False
+                official = await asyncio.to_thread(
+                    acquire_official_price_to_beat, now, retry_attempts=0
+                )
+                if official.get("status") != "unavailable":
+                    checked = resolve_price_to_beat(
+                        official, expected_contract_id=official.get("contract_id"), now=now
+                    )
+                    if (checked.get("status") == "verified"
+                            and checked.get("contract_start_at") == start.isoformat()
+                            and checked.get("contract_end_at") == end.isoformat()):
+                        contract_id = checked["contract_id"]
+                        contract_verified = True
+
+                forecast = self.latest_analysis_forecasts.get("15m") or {}
+                forecast_age = now.timestamp() - float(forecast.get("observed_at", 0) or 0)
+                same_window = abs(float(forecast.get("end_time", 0) or 0) - end.timestamp()) < 2
+                weights = None
+                try:
+                    raw_weights = json.loads(os.getenv("SIGNAL_ORACLE_WEIGHTS", ""))
+                    candidate = [float(value) for value in raw_weights]
+                    if len(candidate) == 9 and all(math.isfinite(value) for value in candidate):
+                        weights = candidate
+                except (ValueError, TypeError, json.JSONDecodeError):
+                    weights = None
+
+                action = "NO TRADE"
+                reason = "Oracle strategy readout weights are not configured; no directional prediction issued."
+                score = None
+                features = []
+                if weights is not None and forecast and 0 <= forecast_age <= 120 and same_window:
+                    market_id = str(forecast.get("market_id") or "")
+                    quote_state = self.last_quote_change_by_id.get(market_id, {})
+                    try:
+                        features = encode_features([{
+                            "probability_up": float(forecast["analysis_up_probability"]),
+                            "direction": str(forecast["analysis_direction"]),
+                            # No confidence value is inferred where the source
+                            # forecast does not expose one.
+                        }], {
+                            "midpoint": float(forecast["market_midpoint"]),
+                            "depth_imbalance": quote_state.get("depth_imbalance") or 0.0,
+                            "short_momentum": float(self.opportunity_detector._consensus_move()[0] or 0.0),
+                        })
+                        decision = decide_oracle(features, weights)
+                        action, score, reason = decision["action"], decision.get("score"), decision["reason"]
+                    except Exception as exc:
+                        action, reason = "NO TRADE", "Oracle input validation failed: " + type(exc).__name__
+                elif weights is not None:
+                    reason = "No fresh same-window 15m Connectome forecast; refusing a late or mismatched prediction."
+
+                candle["current_signal"] = action
+                candle["current_signal_reason"] = reason
+                candle["strategy_version"] = STRATEGY_VERSION
+                store = OraclePostgresStore()
+                await asyncio.to_thread(
+                    store.record_window, candle, contract_id=contract_id,
+                    contract_verified=contract_verified, heartbeat_at=now.isoformat()
+                )
+
+                # First prediction per window is immutable. Never issue after the
+                # configured cutoff; a late worker does not backfill a trade.
+                if entry_cutoff_open(now, end, entry_cutoff) and action in {"UP", "DOWN", "NO TRADE"}:
+                    await asyncio.to_thread(
+                        store.record_prediction,
+                        window_start=start.isoformat(), window_end=end.isoformat(),
+                        issued_at=now.isoformat(), action=action, score=score,
+                        features=features, provenance={
+                            "benchmark_source": "binance_spot_btcusdt_15m",
+                            "benchmark_source_timestamp": candle["benchmark_source_timestamp"],
+                            "benchmark_acquired_at": candle["acquired_at"],
+                            "contract_id": contract_id,
+                            "contract_verified": contract_verified,
+                            "window_kind": "verified_contract" if contract_verified else "utc_research_window",
+                        }, reason=reason, strategy_version=STRATEGY_VERSION,
+                        contract_id=contract_id, contract_verified=contract_verified,
+                    )
+
+                # Recover unresolved outcomes from prior windows after restarts.
+                pending = await asyncio.to_thread(store.pending_windows, 20)
+                for item in pending:
+                    try:
+                        pending_start = item["window_start"]
+                        if isinstance(pending_start, str):
+                            pending_start = datetime.fromisoformat(pending_start.replace("Z", "+00:00"))
+                        pending_start = pending_start.astimezone(timezone.utc)
+                        if pending_start >= start:
+                            continue
+                        old_candle = await asyncio.to_thread(
+                            fetch_window_candle, pending_start, retry_attempts=0
+                        )
+                        if old_candle.get("finalized") is not True:
+                            continue
+                        await asyncio.to_thread(store.record_window, old_candle,
+                            contract_id=item.get("contract_id"),
+                            contract_verified=bool(item.get("contract_verified")),
+                            heartbeat_at=now.isoformat())
+                        await asyncio.to_thread(store.settle_binance_window,
+                            pending_start.isoformat(), outcome=old_candle["outcome"],
+                            finalized=True, close_price=old_candle["close_price"],
+                            close_source_timestamp=old_candle["candle_close_source_timestamp"],
+                            settled_at=now.isoformat())
+                    except Exception:
+                        logger.exception("SIGNAL_ORACLE_RECOVERY_FAILED window=%s", item.get("window_start"))
+                await asyncio.to_thread(store.heartbeat, state="working",
+                    message="Binance paper-direction loop active; contract execution/P&L unavailable.",
+                    at=now.isoformat())
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                logger.exception("SIGNAL_ORACLE_TRACK_B_FAILED")
+                try:
+                    store = OraclePostgresStore()
+                    await asyncio.to_thread(store.record_unavailable_window,
+                        start.isoformat(), end.isoformat(),
+                        type(exc).__name__ + ": " + str(exc), heartbeat_at=now.isoformat())
+                    await asyncio.to_thread(store.heartbeat, state="error",
+                        message=type(exc).__name__ + ": " + str(exc), at=now.isoformat())
+                except Exception:
+                    logger.exception("SIGNAL_ORACLE_HEARTBEAT_FAILED")
+            await asyncio.sleep(10)
 
     async def _checkpoint_settlement_loop(self):
         """Recover unresolved scan labels after worker restarts using Gamma's final outcomes."""
