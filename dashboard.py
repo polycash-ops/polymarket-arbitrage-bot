@@ -163,7 +163,7 @@ function updatePtbForContract(contractId,payload,nowMs=Date.now()){
  put("polyContract",activeTrustedUsContractId);
  put("polyQuestion","Official Polymarket US field: assetPriceTerms.priceToBeat");
  put("polyWindow","Window: "+fmtTime(payload.contract_start_at)+" – "+fmtTime(payload.contract_end_at)+" · PTB: "+usd(value));
- put("polyRefTime","Official PTB retrieved: "+fmtTime(payload.retrieved_at));
+ put("polyQuoteTime","PTB source: official Polymarket US market metadata");put("polyRefTime","Official PTB retrieved: "+fmtTime(payload.retrieved_at));
  const status=el("polyQuoteStatus");if(status){status.textContent="PTB VERIFIED";status.className="badge good";}
  return value;
 }
