@@ -21,7 +21,7 @@ from bot.entry_timing import summarize as summarize_entry_timing
 from bot.readiness_model import build_report as build_readiness_report
 from bot.candidate_profiles import persist_with_graph as persist_candidate_profiles, load_latest as load_saved_candidate_profiles
 from bot.signal_oracle import STRATEGY_VERSION, encode_features, decide as decide_oracle
-from bot.signal_oracle_binance import fetch_window_candle, fetch_current_quote, research_window
+from bot.signal_oracle_binance import fetch_window_candle, fetch_current_quote, research_window, entry_cutoff_open
 from bot.signal_oracle_postgres import OraclePostgresStore
 
 Path("logs").mkdir(parents=True, exist_ok=True)
@@ -591,8 +591,7 @@ class TradingBot:
 
                 # First prediction per window is immutable. Never issue after the
                 # configured cutoff; a late worker does not backfill a trade.
-                remaining = (end - now).total_seconds()
-                if remaining > entry_cutoff and action in {"UP", "DOWN", "NO TRADE"}:
+                if entry_cutoff_open(now, end, entry_cutoff) and action in {"UP", "DOWN", "NO TRADE"}:
                     await asyncio.to_thread(
                         store.record_prediction,
                         window_start=start.isoformat(), window_end=end.isoformat(),
