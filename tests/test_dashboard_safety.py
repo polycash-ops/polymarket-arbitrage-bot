@@ -12,7 +12,7 @@ class DashboardSafetyTests(unittest.TestCase):
         self.assertNotIn("clob.polymarket.com", DASHBOARD)
 
     def test_official_us_market_field_is_the_only_ptb_producer(self):
-        self.assertIn("acquire_official_price_to_beat()", DASHBOARD)
+        self.assertIn("acquire_official_price_to_beat(retry_attempts=1, retry_interval=2.0)", DASHBOARD)
         self.assertIn("market.assetPriceTerms.priceToBeat", PTB_ADAPTER)
         self.assertIn("https://gateway.polymarket.us/v1/market/slug/{}", PTB_ADAPTER)
         self.assertIn("priceToBeat", PTB_ADAPTER)
