@@ -248,6 +248,43 @@ clock();setInterval(clock,1000);refreshReservoir();setInterval(refreshReservoir,
 </script></body></html>"""
 
 
+@app.get("/api/track-b/signal-oracle")
+def signal_oracle_status():
+    """Read Track B's shared durable store; never start or mutate the worker here."""
+    url = os.getenv("CONNECTOME_DATABASE_URL")
+    empty_metrics = {
+        "rolling_window": 100, "rolling_correct": 0, "rolling_total": 0,
+        "rolling_accuracy_pct": None, "lifetime_correct": 0, "lifetime_total": 0,
+        "lifetime_accuracy_pct": None, "pending_count": 0, "tie_count": 0,
+        "excluded_count": 0, "eligible_count": 0,
+    }
+    if not url:
+        return jsonify({"ok": False, "status": "NOT CONFIGURED",
+            "message": "CONNECTOME_DATABASE_URL is not configured on the dashboard service.",
+            "worker_status": "ERROR", "metrics": empty_metrics, "window": None, "latest": None}), 503
+    try:
+        import psycopg
+        from psycopg.rows import dict_row
+        with psycopg.connect(url, connect_timeout=4, row_factory=dict_row) as conn:
+            tables = conn.execute("""SELECT
+                to_regclass('public.signal_oracle_windows') AS windows,
+                to_regclass('public.signal_oracle_predictions') AS predictions,
+                to_regclass('public.signal_oracle_worker_state') AS worker_state""").fetchone()
+        if not tables or not all(tables[key] for key in ("windows", "predictions", "worker_state")):
+            return jsonify({"ok": True, "status": "INITIALIZING", "worker_status": "INITIALIZING",
+                "track": "Track B — Signal Oracle", "mode": "PAPER DIRECTION SIMULATION",
+                "message": "Oracle tables are not initialized. The reviewed migration proposal has not been applied.",
+                "metrics": empty_metrics, "window": None, "latest": None, "worker": None,
+                "heartbeat_age_seconds": None, "paper_only": True, "live_trading_enabled": False})
+        from bot.signal_oracle_postgres import OraclePostgresStore
+        return jsonify(OraclePostgresStore(url).dashboard_payload())
+    except Exception as exc:
+        logging.exception("Signal Oracle dashboard endpoint failed")
+        return jsonify({"ok": False, "status": "ERROR", "worker_status": "ERROR",
+            "message": type(exc).__name__ + ": " + str(exc), "metrics": empty_metrics,
+            "window": None, "latest": None, "paper_only": True, "live_trading_enabled": False}), 503
+
+
 @app.get("/api/biological-reservoir")
 def biological_reservoir_status():
     """Read persisted status for the separate Biological Reservoir research worker."""
