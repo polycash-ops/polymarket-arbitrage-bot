@@ -53,6 +53,10 @@ class OraclePostgresStore:
                 ON CONFLICT (window_start) DO UPDATE SET
                   contract_id = COALESCE(signal_oracle_windows.contract_id, EXCLUDED.contract_id),
                   contract_verified = signal_oracle_windows.contract_verified OR EXCLUDED.contract_verified,
+                  benchmark_price = COALESCE(signal_oracle_windows.benchmark_price, EXCLUDED.benchmark_price),
+                  benchmark_source_timestamp = COALESCE(signal_oracle_windows.benchmark_source_timestamp, EXCLUDED.benchmark_source_timestamp),
+                  benchmark_acquired_at = COALESCE(signal_oracle_windows.benchmark_acquired_at, EXCLUDED.benchmark_acquired_at),
+                  benchmark_status = CASE WHEN signal_oracle_windows.benchmark_price IS NULL THEN 'available' ELSE signal_oracle_windows.benchmark_status END,
                   current_price = EXCLUDED.current_price,
                   current_price_timestamp = EXCLUDED.current_price_timestamp,
                   benchmark_reason = NULL,
@@ -201,7 +205,7 @@ class OraclePostgresStore:
                 FROM ranked
             """).fetchone()
             counts = conn.execute("""
-                SELECT count(*) FILTER (WHERE status='pending') AS pending,
+                SELECT count(*) FILTER (WHERE status='pending' AND action IN ('UP','DOWN')) AS pending,
                   count(*) FILTER (WHERE status='tie') AS ties,
                   count(*) FILTER (WHERE action='NO TRADE' OR status='excluded') AS excluded,
                   count(*) FILTER (WHERE status='resolved' AND action IN ('UP','DOWN') AND outcome IN ('UP','DOWN')) AS eligible
