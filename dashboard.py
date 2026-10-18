@@ -4,7 +4,8 @@ import logging
 import os
 import threading
 
-from canonical_resolver import unavailable_price_to_beat
+from canonical_resolver import resolve_price_to_beat, unavailable_price_to_beat
+from polymarket_us_ptb import acquire_official_price_to_beat, current_btc_15m_slug
 from datetime import datetime
 
 from flask import Flask, jsonify
@@ -142,20 +143,28 @@ function ageLabel(v){if(!v)return "No timestamp";const age=Math.max(0,(Date.now(
 let liveQuoteRequestId=0;
 let activeTrustedUsContractId=null;
 function isCurrentLiveQuoteResponse(requestId,currentRequestId){return requestId===currentRequestId;}
+function expectedCurrentUsContractId(nowMs=Date.now()){
+ const start=new Date(Math.floor(nowMs/900000)*900000);
+ return "btc-updown-15m-"+start.toISOString().slice(0,16).replace("T","-").replace(":","")+"z";
+}
 function canonicalPtbValue(payload, expectedContractId, nowMs=Date.now()){
  if(!payload||payload.status!=="verified"||payload.source!=="polymarket_us_official"||payload.provenance_verified!==true)return null;
  if(!expectedContractId||payload.contract_id!==expectedContractId)return null;
- const price=Number(payload.price_to_beat), observed=Date.parse(payload.observed_at);
+ const price=Number(payload.price_to_beat), retrieved=Date.parse(payload.retrieved_at);
  const start=Date.parse(payload.contract_start_at), end=Date.parse(payload.contract_end_at);
- if(!Number.isFinite(price)||price<=0||!Number.isFinite(observed)||!Number.isFinite(start)||!Number.isFinite(end))return null;
- if(end<=start||nowMs<start||nowMs>=end||observed<start-1000||observed>start+60000||observed>nowMs+1000)return null;
+ if(!Number.isFinite(price)||price<=0||!Number.isFinite(retrieved)||!Number.isFinite(start)||!Number.isFinite(end))return null;
+ if(end-start!==900000||nowMs<start||nowMs>=end||retrieved>nowMs+1000||nowMs-retrieved>30000)return null;
  return price;
 }
 function updatePtbForContract(contractId,payload,nowMs=Date.now()){
  if(contractId!==activeTrustedUsContractId){activeTrustedUsContractId=contractId||null;clearPtb("Contract changed; waiting for verified Polymarket US price-to-beat data.");}
  const value=canonicalPtbValue(payload,activeTrustedUsContractId,nowMs);
- if(value===null){clearPtb();return null;}
- put("polyContract",activeTrustedUsContractId);put("polyQuestion","Verified Polymarket US price-to-beat");put("polyWindow","Price to beat: "+usd(value));
+ if(value===null){clearPtb(payload&&payload.reason?payload.reason:undefined);return null;}
+ put("polyContract",activeTrustedUsContractId);
+ put("polyQuestion","Official Polymarket US field: assetPriceTerms.priceToBeat");
+ put("polyWindow","Window: "+fmtTime(payload.contract_start_at)+" – "+fmtTime(payload.contract_end_at)+" · PTB: "+usd(value));
+ put("polyRefTime","Official PTB retrieved: "+fmtTime(payload.retrieved_at));
+ const status=el("polyQuoteStatus");if(status){status.textContent="PTB VERIFIED";status.className="badge good";}
  return value;
 }
 function clearPtb(reason="No trusted Polymarket US price-to-beat source is configured."){
@@ -172,7 +181,7 @@ async function refreshLiveQuotes(){
    const q=(d.sources||{})[key]||{};put(prefix+"Price",usd(q.price));put(prefix+"Bid",usd(q.bid));put(prefix+"Ask",usd(q.ask));
    put(prefix+"Time","Received: "+fmtTime(q.received_at));put(prefix+"Age",q.error?"Unavailable: "+q.error:ageLabel(q.received_at));
   }
-  const ptb=d.polymarket||{};updatePtbForContract(activeTrustedUsContractId,ptb);
+  const ptb=d.polymarket||{};updatePtbForContract(expectedCurrentUsContractId(),ptb);
   const ref=d.reference||{};put("refPrice",usd(ref.price));put("refSource","Exchange reference (not PTB): "+(ref.source||"—"));put("refTime","Timestamp: "+fmtTime(ref.received_at));
   put("quoteRefresh","Last refreshed "+new Date().toLocaleTimeString("en-US",{timeZone:"America/New_York"})+" ET");
  }catch(e){if(!isCurrentLiveQuoteResponse(requestId,liveQuoteRequestId))return;put("quoteRefresh","Live quote refresh failed: "+String(e.message||e))}
@@ -338,7 +347,11 @@ def live_quotes():
     reference = next(({"source": name.upper(), "price": q.get("price"), "received_at": q.get("received_at")}
                       for name in ("binance", "coinbase", "kraken")
                       if (q := sources.get(name, {})).get("price") is not None), {})
-    poly = unavailable_price_to_beat("No trusted Polymarket US contract/PTB source is configured; international Gamma/CLOB quotes are intentionally excluded.")
+    candidate = acquire_official_price_to_beat()
+    if candidate.get("status") == "unavailable":
+        poly = candidate
+    else:
+        poly = resolve_price_to_beat(candidate, expected_contract_id=current_btc_15m_slug())
     return jsonify({"ok": True, "sources": sources, "reference": reference, "polymarket": poly,
                     "received_at": datetime.now(timezone.utc).isoformat(),
                     "refresh_seconds": 5, "research_only": True, "live_trading_enabled": False})
