@@ -37,6 +37,8 @@ class OracleTests(unittest.TestCase):
         self.assertIsNone(m["rolling_accuracy_pct"])
         self.assertIsNone(m["lifetime_accuracy_pct"])
         self.assertEqual(m["lifetime_count"], 0)
+        self.store.record(self.pred())
+        self.assertEqual(self.store.metrics()["pending_count"], 1)
     def test_features_are_bounded(self):
         x=encode_features([{"probability_up":.8,"confidence":.7,"direction":"UP"}],
                           {"midpoint":.6,"depth_imbalance":2,"short_momentum":.1})
