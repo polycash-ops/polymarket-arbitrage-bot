@@ -3,21 +3,21 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const vm = require('node:vm');
 const source = fs.readFileSync(require('node:path').join(__dirname, '..', 'dashboard.py'), 'utf8');
-const scriptMatch = source.match(/<script>([\\s\\S]*?)<\\/script>/);
+const scriptMatch = source.match(/<script>([\s\S]*?)<\/script>/);
 assert.ok(scriptMatch, 'dashboard inline script exists');
 const script = scriptMatch[1];
 const functionNames = ['expectedCurrentUsContractId', 'isCurrentLiveQuoteResponse', 'canonicalPtbValue', 'updatePtbForContract', 'clearPtb'];
 const snippets = functionNames.map(name => {
-  const start = script.indexOf(`function ${name}(`);
-  assert.notEqual(start, -1, `${name} is defined in production dashboard source`);
+  const start = script.indexOf('function ' + name + '(');
+  assert.notEqual(start, -1, name + ' is defined in production dashboard source');
   let depth = 0, opened = false, end = -1;
   for (let i = script.indexOf('{', start); i < script.length; i++) {
     if (script[i] === '{') { depth++; opened = true; }
     else if (script[i] === '}') { depth--; if (opened && depth === 0) { end = i + 1; break; } }
   }
-  assert.notEqual(end, -1, `${name} body is complete`);
+  assert.notEqual(end, -1, name + ' body is complete');
   return script.slice(start, end);
-}).join('\\n');
+}).join('\n');
 const calls = [];
 const elements = {};
 const context = {
@@ -27,7 +27,7 @@ const context = {
   usd: value => '$' + value,
   fmtTime: value => String(value),
 };
-vm.runInNewContext(snippets + '\\nthis.api={expectedCurrentUsContractId,isCurrentLiveQuoteResponse,canonicalPtbValue,updatePtbForContract,clearPtb};', context);
+vm.runInNewContext(snippets + '\nthis.api={expectedCurrentUsContractId,isCurrentLiveQuoteResponse,canonicalPtbValue,updatePtbForContract,clearPtb};', context);
 const api = context.api;
 const now = Date.parse('2026-10-18T12:00:00Z');
 const good = {status:'verified', source:'polymarket_us_official', provenance_verified:true, contract_id:'btc-updown-15m-2026-10-18-1200z', price_to_beat:67234, retrieved_at:'2026-10-18T12:00:00Z', contract_start_at:'2026-10-18T12:00:00Z', contract_end_at:'2026-10-18T12:15:00Z'};
