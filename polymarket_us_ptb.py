@@ -32,7 +32,7 @@ def current_btc_15m_window(now: datetime | None = None) -> tuple[str, datetime, 
     start_epoch = int(now.timestamp()) // CONTRACT_SECONDS * CONTRACT_SECONDS
     start = datetime.fromtimestamp(start_epoch, timezone.utc)
     end = start + timedelta(seconds=CONTRACT_SECONDS)
-    slug = "btc-updown-15m-" + start.strftime("%Y-%m-%d-%H%M") + "z"
+    slug = "cpc-btc-updown-15m-" + start.strftime("%Y-%m-%d-%H%M") + "z"
     return slug, start, end
 
 
