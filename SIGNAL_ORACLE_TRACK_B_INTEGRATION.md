@@ -38,3 +38,8 @@ The strategy inputs are sourced from the existing 15-minute Connectome forecast 
 2. Separately approve and apply the proposed additive schema migration to the intended shared database.
 3. Run the complete repository test suite, including the new Binance tests, and verify the worker/store/API/browser flow in an authorized environment.
 4. Obtain separate merge/deployment approval. Render `main` may auto-deploy. Live trading remains prohibited.
+
+
+### Shared official 15-minute market source
+
+The Track A 15-minute quote path uses the same validated official Polymarket US market-by-slug payload and PTB adapter as Oracle Track B. Gamma/international 15-minute rows are rejected rather than used as fallback; Gamma is retained for the separate hourly feed. If the official US response lacks quote/outcome fields, no 15-minute quote is emitted. This is fail-closed; do not claim operational 15-minute quotes until the official US quote schema is confirmed.

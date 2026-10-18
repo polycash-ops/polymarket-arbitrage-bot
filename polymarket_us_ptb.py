@@ -123,6 +123,7 @@ def acquire_official_price_to_beat(
             "contract_end_at": end.isoformat(),
             "source_field": "market.assetPriceTerms.priceToBeat",
             "source_url": url,
+            "official_market": market,
         }
     except Exception as exc:
         return unavailable_price_to_beat("Official Polymarket US PTB acquisition failed: " + type(exc).__name__ + ": " + str(exc))

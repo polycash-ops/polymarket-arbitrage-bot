@@ -233,51 +233,39 @@ class MarketMonitor:
                 now_dt = datetime.fromtimestamp(now, timezone.utc)
                 window_minute = (now_dt.minute // 15) * 15
                 window_start = now_dt.replace(minute=window_minute, second=0, microsecond=0)
-                slug_starts = [window_start, window_start + timedelta(minutes=15)]
+                expected_us_slug = polymarket_us_btc_15m_slug(window_start)
                 data = []
-                # Query the known 15-minute BTC contract slug directly first; Gamma's
-                # first page of active markets often omits these short-window contracts.
-                for start_at in slug_starts:
-                    epoch_slug_time = int(start_at.timestamp())
-                    # Share the canonical Polymarket US PTB slug generator with
-                    # Oracle Track B. Keep legacy Gamma slug probes as compatibility
-                    # fallbacks for the existing research quote feed only.
-                    expected_slugs = [
-                        polymarket_us_btc_15m_slug(start_at),
-                        f"btc-updown-15m-{epoch_slug_time}",
-                        f"bitcoin-updown-15m-{epoch_slug_time}",
-                    ]
-                    for expected_slug in expected_slugs:
-                        # Gamma supports direct slug paths; a query-string filter may
-                        # return an unrelated page or no rows for short-window markets.
-                        for endpoint in (f"{url}/slug/{expected_slug}",):
-                            async with self.session.get(endpoint) as response:
-                                if response.status == 200:
-                                    result = await response.json()
-                                    if isinstance(result, dict) and str(result.get("slug") or "") == expected_slug:
-                                        data.append(result)
-                                    elif isinstance(result, list):
-                                        data.extend(
-                                            market for market in result
-                                            if isinstance(market, dict)
-                                            and str(market.get("slug") or "") == expected_slug
-                                        )
-                        if data:
-                            break
-                    if data:
-                        break
-                # Always inspect the active market list so both short-dated and
-                # hourly BTC contracts can be sampled on the same refresh cadence.
+                # Use the official US market-by-slug/PTB adapter for 15m quotes.
+                # Fail closed rather than substituting Gamma/international markets.
+                try:
+                    from polymarket_us_ptb import acquire_official_price_to_beat
+                    official_ptb = await asyncio.to_thread(
+                        acquire_official_price_to_beat, now_dt, retry_attempts=0
+                    )
+                    official_market = official_ptb.get("official_market")
+                    if (official_ptb.get("source") == "polymarket_us_official"
+                            and official_ptb.get("contract_id") == expected_us_slug
+                            and isinstance(official_market, dict)
+                            and official_market.get("slug") == expected_us_slug):
+                        official_market = dict(official_market)
+                        official_market["_quote_source"] = "polymarket_us_official"
+                        official_market["_ptb_verified"] = True
+                        official_market["_official_price_to_beat"] = official_ptb["price_to_beat"]
+                        data.append(official_market)
+                    else:
+                        logger.warning("Official Polymarket US 15m market/PTB unavailable; no Gamma fallback: %s", official_ptb.get("reason", "unverified response"))
+                except Exception as official_exc:
+                    logger.warning("Official Polymarket US 15m quote discovery failed closed: %s", official_exc)
+
+                # Gamma remains only for the separate hourly research quote feed.
                 async with self.session.get(url, params={
                     "limit": 1000, "offset": 0, "active": "true", "closed": "false"
                 }) as response:
                     if response.status == 200:
                         result = await response.json()
-                        broad = result if isinstance(result, list) else []
-                        known = {str(item.get("slug") or item.get("id") or "") for item in data if isinstance(item, dict)}
-                        data.extend(item for item in broad if isinstance(item, dict) and str(item.get("slug") or item.get("id") or "") not in known)
+                        data.extend(item for item in (result if isinstance(result, list) else []) if isinstance(item, dict))
                     else:
-                        logger.warning("Polymarket active market listing returned HTTP %s", response.status)
+                        logger.warning("Gamma hourly market listing returned HTTP %s", response.status)
 
                 candidates = []
                 for market in data if isinstance(data, list) else []:
@@ -297,7 +285,17 @@ class MarketMonitor:
                     if not (is_15m or is_1h):
                         continue
                     interval = "15m" if is_15m else "1h"
+                    if interval == "15m" and (
+                        market.get("_quote_source") != "polymarket_us_official"
+                        or market.get("_ptb_verified") is not True
+                        or slug != expected_us_slug
+                    ):
+                        continue
                     raw_end = market.get("endDate") or market.get("endDateIso") or market.get("end_date")
+                    if not raw_end and market.get("_quote_source") == "polymarket_us_official":
+                        terms = market.get("assetPriceTerms")
+                        if isinstance(terms, dict):
+                            raw_end = terms.get("windowEnd")
                     end_time = None
                     if raw_end:
                         try:
@@ -353,7 +351,9 @@ class MarketMonitor:
                     token_ids = self._as_list(market.get("clobTokenIds"))
                     outcomes_for_tokens = self._as_list(market.get("outcomes"))
                     up_index = 1 if len(outcomes_for_tokens) > 1 and "down" in str(outcomes_for_tokens[0]).lower() and "up" in str(outcomes_for_tokens[1]).lower() else 0
-                    if len(token_ids) > up_index and now - self._last_depth_fetch.get(slug, 0.0) >= 5.0:
+                    if (market.get("_quote_source") != "polymarket_us_official"
+                            and len(token_ids) > up_index
+                            and now - self._last_depth_fetch.get(slug, 0.0) >= 5.0):
                         self._last_depth_fetch[slug] = now
                         try:
                             async with self.session.get("https://clob.polymarket.com/book", params={"token_id": str(token_ids[up_index])}) as book_response:
@@ -374,6 +374,10 @@ class MarketMonitor:
                         depth_imbalance=depth_imbalance, bid_depth=bid_depth, ask_depth=ask_depth,
                         market_interval=interval
                     )
+                    if interval == "15m":
+                        point.official_price_to_beat = market.get("_official_price_to_beat")
+                        point.ptb_source = "polymarket_us_official"
+                        point.ptb_verified = True
                     self.prices["polymarket" if interval == "15m" else "polymarket_1h"] = point
                     if interval == "15m":
                         self.polymarket_market_key = slug

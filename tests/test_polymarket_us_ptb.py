@@ -39,6 +39,7 @@ class OfficialPtbAcquisitionTests(unittest.TestCase):
         self.assertEqual(result["contract_id"], self.slug)
         self.assertEqual(result["price_to_beat"], 67234.56)
         self.assertEqual(result["source_field"], "market.assetPriceTerms.priceToBeat")
+        self.assertEqual(result["official_market"]["slug"], self.slug)
         self.assertEqual(len(urls), 1)
         self.assertIn(self.slug, urls[0])
 
