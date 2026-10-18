@@ -60,9 +60,20 @@ class CanonicalResolverTests(unittest.TestCase):
         self.assertEqual(state["status"], "verified")
         self.assertEqual(state["price_to_beat"], 67234.5)
 
+
+    def test_accepts_retrieval_age_up_to_two_minutes_and_rejects_older(self):
+        for age_seconds in (30, 120):
+            with self.subTest(age_seconds=age_seconds):
+                payload = {**self.payload, "retrieved_at": (self.now - timedelta(seconds=age_seconds)).isoformat()}
+                state = resolve_price_to_beat(payload, expected_contract_id="us-contract-123", now=self.now)
+                self.assertEqual(state["status"], "verified")
+        stale = {**self.payload, "retrieved_at": (self.now - timedelta(seconds=120, milliseconds=1)).isoformat()}
+        state = resolve_price_to_beat(stale, expected_contract_id="us-contract-123", now=self.now)
+        self.assertEqual(state["status"], "unavailable")
+
     def test_rejects_stale_future_naive_and_expired_lifecycle_timestamps(self):
         bad_payloads = (
-            {**self.payload, "retrieved_at": (self.now - timedelta(seconds=45)).isoformat()},
+            {**self.payload, "retrieved_at": (self.now - timedelta(seconds=121)).isoformat()},
             {**self.payload, "retrieved_at": (self.now + timedelta(seconds=3)).isoformat()},
             {**self.payload, "retrieved_at": "2026-10-18T11:59:00"},
             {**self.payload, "contract_end_at": (self.now - timedelta(seconds=1)).isoformat()},
