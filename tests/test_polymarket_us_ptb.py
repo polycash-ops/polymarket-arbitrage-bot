@@ -1,7 +1,10 @@
 import unittest
 from datetime import datetime, timezone, timedelta
 
-from polymarket_us_ptb import acquire_official_price_to_beat, current_btc_15m_slug, current_btc_15m_window
+from polymarket_us_ptb import (
+    acquire_official_price_to_beat, current_btc_15m_slug,
+    current_btc_15m_window, polymarket_us_btc_15m_slug,
+)
 
 
 class OfficialPtbAcquisitionTests(unittest.TestCase):
@@ -23,6 +26,11 @@ class OfficialPtbAcquisitionTests(unittest.TestCase):
     def test_slug_is_current_15_minute_utc_boundary(self):
         self.assertEqual(self.slug, "cpc-btc-updown-15m-2026-10-18-1200z")
         self.assertEqual(current_btc_15m_slug(self.now), self.slug)
+        self.assertEqual(polymarket_us_btc_15m_slug(self.start), self.slug)
+
+    def test_shared_us_slug_requires_exact_15_minute_boundary(self):
+        with self.assertRaisesRegex(ValueError, "exact 15-minute UTC boundary"):
+            polymarket_us_btc_15m_slug(self.start + timedelta(seconds=1))
 
     def test_reads_explicit_official_us_price_to_beat(self):
         urls = []

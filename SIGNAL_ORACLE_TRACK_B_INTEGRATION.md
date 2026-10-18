@@ -12,7 +12,7 @@ PR: #7. This branch is not merged or deployed.
 - Final outcome is derived only from the same candle after its close timestamp: UP if close > open, DOWN if close < open, TIE if equal. An unfinalized candle remains pending.
 - `bot/signal_oracle_postgres.py` implements shared durable persistence through `CONNECTOME_DATABASE_URL`, immutable first benchmark values, deterministic per-window prediction IDs, pending-window recovery, and metrics. It does not apply or create database schema.
 - `dashboard.py` registers `/api/track-b/signal-oracle` and renders a Track B panel with signal/reason, benchmark and current quote timestamps, window status, rolling/lifetime accuracy, pending/tie/excluded counts, worker heartbeat, and explicit N/A contract execution/P&L.
-- `polymarket_us_ptb.py` retains official US PTB provenance checks and uses the `cpc-btc-updown-15m-...` market slug. It retries the transient null `priceToBeat` case only, with a bounded retry count. Binance is never a fallback for official PTB.
+- `polymarket_us_ptb.py` owns the canonical `polymarket_us_btc_15m_slug()` generator for the official US `cpc-btc-updown-15m-YYYY-MM-DD-HHMMz` slug. Oracle Track B's official PTB acquisition and the main Track A research market monitor both use this shared helper; the research monitor probes the US slug first, retaining legacy Gamma slug probes only as compatibility fallbacks for its existing quote feed. Official PTB provenance checks remain fail-closed, with bounded retries only for transient null `priceToBeat`. Binance is never a fallback for official PTB.
 - Live order submission remains hard-blocked. No token price, fill, or contract P&L is inferred from Binance direction results.
 
 ## Strategy configuration blocker

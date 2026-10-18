@@ -27,14 +27,21 @@ def _utc(value: datetime | None = None) -> datetime:
     return value.astimezone(timezone.utc)
 
 
+def polymarket_us_btc_15m_slug(window_start: datetime) -> str:
+    """Build the canonical official Polymarket US BTC 15m slug for an exact UTC boundary."""
+    start = _utc(window_start)
+    if start.microsecond or int(start.timestamp()) % CONTRACT_SECONDS:
+        raise ValueError("Polymarket US BTC 15m slug requires an exact 15-minute UTC boundary.")
+    return "cpc-btc-updown-15m-" + start.strftime("%Y-%m-%d-%H%M") + "z"
+
+
 def current_btc_15m_window(now: datetime | None = None) -> tuple[str, datetime, datetime]:
     """Return the official US BTC 15m slug and its exact UTC window."""
     now = _utc(now)
     start_epoch = int(now.timestamp()) // CONTRACT_SECONDS * CONTRACT_SECONDS
     start = datetime.fromtimestamp(start_epoch, timezone.utc)
     end = start + timedelta(seconds=CONTRACT_SECONDS)
-    slug = "cpc-btc-updown-15m-" + start.strftime("%Y-%m-%d-%H%M") + "z"
-    return slug, start, end
+    return polymarket_us_btc_15m_slug(start), start, end
 
 
 def current_btc_15m_slug(now: datetime | None = None) -> str:

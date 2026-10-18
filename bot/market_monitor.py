@@ -12,6 +12,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone, timedelta
 import logging
 
+from polymarket_us_ptb import polymarket_us_btc_15m_slug
+
 logger = logging.getLogger(__name__)
 
 
@@ -237,10 +239,13 @@ class MarketMonitor:
                 # first page of active markets often omits these short-window contracts.
                 for start_at in slug_starts:
                     epoch_slug_time = int(start_at.timestamp())
+                    # Share the canonical Polymarket US PTB slug generator with
+                    # Oracle Track B. Keep legacy Gamma slug probes as compatibility
+                    # fallbacks for the existing research quote feed only.
                     expected_slugs = [
+                        polymarket_us_btc_15m_slug(start_at),
                         f"btc-updown-15m-{epoch_slug_time}",
                         f"bitcoin-updown-15m-{epoch_slug_time}",
-                        f"cpc-btc-updown-15m-{start_at:%Y-%m-%d}-{start_at:%H%M}z",
                     ]
                     for expected_slug in expected_slugs:
                         # Gamma supports direct slug paths; a query-string filter may
