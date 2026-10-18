@@ -305,6 +305,7 @@ def biological_reservoir_status():
 
 
 @app.get("/api/oracle-track-b")
+@require_auth
 def oracle_track_b_status():
     """Read the independent paper-only Oracle Track B ledger from the shared paid DB."""
     url = os.getenv("CONNECTOME_DATABASE_URL")
