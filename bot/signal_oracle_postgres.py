@@ -32,7 +32,9 @@ class OraclePostgresStore:
 
     @staticmethod
     def _prediction_id(window_start: str, strategy_version: str) -> str:
-        return hashlib.sha256(("signal_oracle|" + strategy_version + "|" + window_start).encode()).hexdigest()
+        # Exactly one scored prediction per UTC window, even if a deployment
+        # changes the readout version before the window closes.
+        return hashlib.sha256(("signal_oracle|window|" + window_start).encode()).hexdigest()
 
     def record_window(self, benchmark: dict[str, Any], *, contract_id: str | None = None,
                       contract_verified: bool = False, heartbeat_at: str | None = None) -> dict[str, Any]:
