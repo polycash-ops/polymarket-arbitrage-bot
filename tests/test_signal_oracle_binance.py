@@ -2,7 +2,7 @@ import unittest
 from datetime import datetime, timezone
 
 from bot.signal_oracle_binance import (
-    CANDLE_MS, fetch_current_quote, fetch_window_candle, parse_kline, research_window, score_direction,
+    CANDLE_MS, entry_cutoff_open, fetch_current_quote, fetch_window_candle, parse_kline, research_window, score_direction,
 )
 
 
@@ -23,6 +23,12 @@ class BinancePaperPtbTests(unittest.TestCase):
         self.assertEqual(candle["benchmark_source_timestamp"], self.start.isoformat())
         self.assertEqual(candle["quote_currency"], "USDT")
         self.assertEqual(candle["outcome"], "UP")
+
+    def test_entry_cutoff_prevents_lookahead(self):
+        end = datetime(2026, 10, 18, 12, 15, tzinfo=timezone.utc)
+        self.assertTrue(entry_cutoff_open(datetime(2026, 10, 18, 12, 13, 59, tzinfo=timezone.utc), end, 60))
+        self.assertFalse(entry_cutoff_open(datetime(2026, 10, 18, 12, 14, tzinfo=timezone.utc), end, 60))
+        self.assertFalse(entry_cutoff_open(datetime(2026, 10, 18, 12, 15, 1, tzinfo=timezone.utc), end, 60))
 
     def test_wrong_open_timestamp_rejected(self):
         row = list(self.row)
