@@ -41,6 +41,7 @@ from reservoir_consumer import (
     outcome_provenance_trusted,
 )
 from canonical_resolver import select_canonical_open_contract
+from price_to_beat import extract_price_to_beat, reject_non_authoritative_fallbacks
 
 
 def _run_bot():
@@ -106,8 +107,10 @@ h1{font-size:clamp(1.5rem,4vw,2.2rem);line-height:1.15;margin:0 0 8px;letter-spa
 <section class="section panel"><div class="panel-inner">
  <div class="section-head"><h2>Current Polymarket BTC contract</h2><span class="badge warn" id="polyQuoteStatus">CONNECTING</span></div>
  <div class="quote-grid">
-  <article class="card"><div class="metric-label">Active 15-minute contract</div><div class="quote-value" id="polyContract">—</div><div class="quote-meta" id="polyQuestion">—</div><div class="quote-meta" id="polyWindow">Contract window: —</div></article>
-  <article class="card"><div class="metric-label">UP / DOWN · implied probability</div><div class="quote-row"><span>UP chance</span><strong class="quote-value" id="polyUpPct">—</strong></div><div class="quote-row"><span>DOWN chance</span><strong class="quote-value" id="polyDownPct">—</strong></div><div class="quote-meta">Calculated from the UP-token midpoint</div><div class="quote-meta" id="polyQuoteTime">Quote received: —</div><div class="quote-meta">UP token bid / ask: <strong id="polyUpBid">—</strong> / <strong id="polyUpAsk">—</strong></div></article>
+  <article class="card"><div class="metric-label">Active 15-minute contract</div><div class="quote-value" id="polyContract">—</div><div class="quote-meta" id="polyQuestion">—</div><div class="quote-meta" id="polyWindow">Contract window: —</div>
+  <div class="quote-meta" id="polyPriceToBeat">Price to beat: UNAVAILABLE</div>
+  <div class="quote-meta" id="polyPriceToBeatMeta">Target source: —</div></article>
+  <article class="card"><div class="metric-label">UP / DOWN · implied probability</div><div class="quote-row"><span>UP chance</span><strong class="quote-value" id="polyUpPct">—</strong></div><div class="quote-row"><span>DOWN chance</span><strong class="quote-value" id="polyDownPct">—</strong></div><div class="quote-meta">US outcome quotes unavailable until a Polymarket US book source is wired</div><div class="quote-meta" id="polyQuoteTime">Quote received: —</div><div class="quote-meta">UP token bid / ask: <strong id="polyUpBid">—</strong> / <strong id="polyUpAsk">—</strong></div></article>
   <article class="card"><div class="metric-label">Reference BTC price timestamp</div><div class="quote-value" id="refPrice">—</div><div class="quote-meta" id="refSource">Reference source: —</div><div class="quote-meta" id="refTime">Timestamp: —</div><div class="quote-meta" id="polyRefTime">Contract start/reference time: —</div></article>
  </div>
 </div></section>
@@ -140,8 +143,8 @@ h1{font-size:clamp(1.5rem,4vw,2.2rem);line-height:1.15;margin:0 0 8px;letter-spa
  </div>
 </div></section>
 <section class="section panel"><div class="panel-inner">
- <div class="section-head"><div><h2>Recent reservoir observations</h2><p class="small">UP/DOWN probabilities estimate which side wins at contract expiry relative to that contract’s price to beat. Price to beat is the BTC reference price recorded for the contract.</p></div><span class="small" id="refreshTime">Waiting for first refresh</span></div>
- <div class="table-wrap"><table><thead><tr><th>Captured</th><th>Timeframe</th><th>Checkpoint</th><th>Contract</th><th>Forecast</th><th>UP probability</th><th>DOWN probability</th><th>Price to beat</th><th>Market midpoint</th><th>Order-book depth (bid / ask · imbalance)</th><th>Exchange quotes (bid / ask · age)</th><th>Outcome</th><th>Brier</th><th>Learned</th></tr></thead><tbody id="bioRows"><tr><td colspan="14" class="empty">Connecting to reservoir telemetry…</td></tr></tbody></table></div>
+ <div class="section-head"><div><h2>Recent reservoir observations</h2><p class="small">UP/DOWN probabilities estimate which side wins at contract expiry relative to that contract’s Price to Beat. Price to Beat is shown only when assetPriceTerms.priceToBeat is backend-validated for the exact US BTC Up/Down 15m contract; otherwise it is unavailable. Observation reference price is a separate research field.</p></div><span class="small" id="refreshTime">Waiting for first refresh</span></div>
+ <div class="table-wrap"><table><thead><tr><th>Captured</th><th>Timeframe</th><th>Checkpoint</th><th>Contract</th><th>Forecast</th><th>UP probability</th><th>DOWN probability</th><th>Price to beat (authoritative)</th><th>Market midpoint</th><th>Order-book depth (bid / ask · imbalance)</th><th>Exchange quotes (bid / ask · age)</th><th>Outcome</th><th>Brier</th><th>Learned</th></tr></thead><tbody id="bioRows"><tr><td colspan="14" class="empty">Connecting to reservoir telemetry…</td></tr></tbody></table></div>
 </div></section>
 <section class="section panel"><div class="panel-inner">
  <div class="section-head"><div><h2>Contract signal history</h2><p class="small">Last five persisted forecasts per contract. Pending outcomes remain pending; only explicitly verified settlements count as verified.</p></div><span class="small" id="signalHistoryRefresh">Waiting for signal history</span></div>
@@ -218,7 +221,7 @@ async function refreshReservoir(){
   const freshness=d.freshness||{};const wf=freshness.worker_heartbeat||{};const sf=freshness.source_snapshot||{};put("bioMessage",(d.message||"Telemetry loaded from persistent reservoir tables.")+" Worker heartbeat: "+(wf.status||"UNAVAILABLE")+"; source snapshot: "+(sf.status||"UNAVAILABLE")+".");
   const body=el("bioRows");body.replaceChildren();const rows=Array.isArray(d.recent)?d.recent:[];
   if(!rows.length){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=14;td.className="empty";td.textContent="No reservoir observations recorded yet";tr.appendChild(td);body.appendChild(tr)}
-  rows.forEach(x=>{const tr=document.createElement("tr");const q=x.btc_quotes||{};const qfmt=s=>{const v=q[s];if(!v)return s+": —";const bid=v.bid_usd==null?"—":usd(v.bid_usd),ask=v.ask_usd==null?"—":usd(v.ask_usd),age=v.quote_age_seconds==null?"—":Math.round(Number(v.quote_age_seconds))+"s";return s+": "+bid+" / "+ask+" · "+age};const exchangeQuotes=["coinbase","kraken","binance"].map(qfmt).join(" | ");const depthNum=v=>v==null||!Number.isFinite(Number(v))?"—":Number(v).toLocaleString("en-US",{maximumFractionDigits:4});const depth="Bid "+depthNum(x.market_bid_depth)+" / Ask "+depthNum(x.market_ask_depth)+" · Imbalance "+(x.market_depth_imbalance==null?"—":Number(x.market_depth_imbalance).toFixed(3));const vals=[fmtTime(x.captured_at),x.timeframe||"—",x.checkpoint||"continuous",x.market_slug||"—",x.forecast_direction||"—",x.probability_up==null?"—":(100*Number(x.probability_up)).toFixed(1)+"%",x.probability_up==null?"—":(100*(1-Number(x.probability_up))).toFixed(1)+"%",x.price_to_beat==null?"—":usd(x.price_to_beat),x.market_midpoint==null?"—":Number(x.market_midpoint).toFixed(4),depth,exchangeQuotes,x.outcome||"PENDING",x.brier_score==null?"—":Number(x.brier_score).toFixed(5),x.learning_update_applied?"YES":"—"];vals.forEach(v=>{const td=document.createElement("td");td.textContent=String(v);tr.appendChild(td)});body.appendChild(tr)});
+  rows.forEach(x=>{const tr=document.createElement("tr");const q=x.btc_quotes||{};const qfmt=s=>{const v=q[s];if(!v)return s+": —";const bid=v.bid_usd==null?"—":usd(v.bid_usd),ask=v.ask_usd==null?"—":usd(v.ask_usd),age=v.quote_age_seconds==null?"—":Math.round(Number(v.quote_age_seconds))+"s";return s+": "+bid+" / "+ask+" · "+age};const exchangeQuotes=["coinbase","kraken","binance"].map(qfmt).join(" | ");const depthNum=v=>v==null||!Number.isFinite(Number(v))?"—":Number(v).toLocaleString("en-US",{maximumFractionDigits:4});const depth="Bid "+depthNum(x.market_bid_depth)+" / Ask "+depthNum(x.market_ask_depth)+" · Imbalance "+(x.market_depth_imbalance==null?"—":Number(x.market_depth_imbalance).toFixed(3));const vals=[fmtTime(x.captured_at),x.timeframe||"—",x.checkpoint||"continuous",x.market_slug||"—",x.forecast_direction||"—",x.probability_up==null?"—":(100*Number(x.probability_up)).toFixed(1)+"%",x.probability_up==null?"—":(100*(1-Number(x.probability_up))).toFixed(1)+"%",(x.price_to_beat_status==="AVAILABLE"&&x.price_to_beat!=null)?usd(x.price_to_beat):(x.price_to_beat_status?String(x.price_to_beat_status):"UNAVAILABLE"),x.market_midpoint==null?"—":Number(x.market_midpoint).toFixed(4),depth,exchangeQuotes,x.outcome||"PENDING",x.brier_score==null?"—":Number(x.brier_score).toFixed(5),x.learning_update_applied?"YES":"—"];vals.forEach(v=>{const td=document.createElement("td");td.textContent=String(v);tr.appendChild(td)});body.appendChild(tr)});
   put("refreshTime","Last refreshed "+new Date().toLocaleTimeString("en-US",{timeZone:"America/New_York"})+" ET");
  }catch(e){
   if(badge){badge.textContent="NOT CONNECTED";badge.className="badge bad"}
@@ -244,6 +247,17 @@ async function refreshLiveQuotes(){
   const canonical=cd.status==="OPEN"?cd.contract:null;
   const previousIdentity=Object.prototype.hasOwnProperty.call(window,"__reservoirCanonicalIdentity")?window.__reservoirCanonicalIdentity:null;
   window.__reservoirCanonicalIdentity=canonical?canonical.identity:null;
+  const ptb=cd.price_to_beat||{};
+  const ptbOk=ptb.status==="AVAILABLE"&&ptb.value!=null;
+  // Bind target only to the current canonical identity/windows; clear on mismatch/rollover.
+  if(!canonical||!ptbOk||(ptb.contract_id&&ptb.contract_id!==canonical.identity)){
+    put("polyPriceToBeat","Price to beat: UNAVAILABLE");
+    put("polyPriceToBeatMeta","Target source: "+(ptb.reason||ptb.status||"unavailable")+(canonical?"":" · no open contract"));
+  }else{
+    put("polyPriceToBeat","Price to beat: "+usd(ptb.value)+(ptb.currency?" "+ptb.currency:""));
+    put("polyPriceToBeatMeta","Target source: "+(ptb.source_field||"assetPriceTerms.priceToBeat")+" · index "+(ptb.index_symbol||"—")+" · window "+(ptb.window_start||"—")+" – "+(ptb.window_end||"—"));
+  }
+
   const identityChanged=previousIdentity!==window.__reservoirCanonicalIdentity;
   if(identityChanged){
     bumpAlertGeneration();
@@ -264,8 +278,11 @@ async function refreshLiveQuotes(){
     if(status){status.textContent=canonical?"CONTRACT MISMATCH":"NO CANONICAL CONTRACT";status.className="badge warn";}
     refreshContractPriceChart(canonical?canonical.identity:null);
   }else{
-    const upPct=p.midpoint==null?null:Math.max(0,Math.min(100,100*Number(p.midpoint)));put("polyUpPct",upPct==null?"—":upPct.toFixed(1)+"%");put("polyDownPct",upPct==null?"—":(100-upPct).toFixed(1)+"%");put("polyUpBid",cents(p.bid));put("polyUpAsk",cents(p.ask));put("polyQuoteTime","Quote received: "+fmtTime(p.received_at));
-    if(status){status.textContent=p.error?"QUOTE UNAVAILABLE":"LIVE QUOTE";status.className="badge "+(p.error?"warn":"good");}
+    // International Gamma/CLOB quotes must not fill the US contract UP/DOWN panel.
+    // Keep panel unavailable until a matching Polymarket US quote source exists.
+    put("polyUpPct","—");put("polyDownPct","—");put("polyUpBid","—");put("polyUpAsk","—");
+    put("polyQuoteTime","US outcome quotes unavailable (international book not used for US panel)");
+    if(status){status.textContent="US QUOTES UNAVAILABLE";status.className="badge warn";}
     refreshContractPriceChart(canonical.identity);
   }
   const ref=d.reference||{};put("refPrice",usd(ref.price));put("refSource","Reference source: "+(ref.source||"—"));put("refTime","Timestamp: "+fmtTime(ref.received_at));put("polyRefTime","Contract start/reference time: "+fmtTime(p.start_at));
@@ -479,7 +496,7 @@ def biological_reservoir_status():
                 SELECT snapshot_id, market_slug, captured_at,
                     details->>'contract_timeframe' AS timeframe, checkpoint,
                     forecast_direction, probability_up,
-                    NULLIF(details->'contract_timeline'->'current_contract'->>'reference_price','')::double precision AS price_to_beat,
+                    NULLIF(details->'contract_timeline'->'current_contract'->>'reference_price','')::double precision AS observation_reference_price,
                     market_midpoint, market_bid_depth, market_ask_depth, market_depth_imbalance,
                     order_book_levels, outcome, brier_score, learning_update_applied,
                     details->'btc_feed_asof'->'samples' AS btc_quotes
@@ -488,6 +505,28 @@ def biological_reservoir_status():
                   AND COALESCE(details->>'is_synthetic','false') <> 'true'
                 ORDER BY captured_at DESC, snapshot_id DESC LIMIT 30
             """).fetchall()
+
+            # Phase A safety: never promote observation reference_price to Price to Beat.
+            # Authoritative target comes only from assetPriceTerms.priceToBeat via extract_price_to_beat.
+            # Until live US market metadata for the exact contract is supplied to that function,
+            # the target remains UNAVAILABLE. Observation reference is labeled separately.
+            annotated_recent = []
+            for row in recent:
+                item = dict(row)
+                item["price_to_beat"] = None
+                item["price_to_beat_status"] = "UNAVAILABLE"
+                item["price_to_beat_reason"] = "authoritative_metadata_not_supplied_to_dashboard"
+                item["price_to_beat_source_field"] = None
+                # Keep observation_reference_price as a research field only (already in SQL).
+                # Explicitly refuse non-authoritative fallbacks.
+                fallback_warnings = reject_non_authoritative_fallbacks({
+                    "reference_price": item.get("observation_reference_price"),
+                    "strike": None,
+                    "tradingReferencePx": None,
+                })
+                item["price_to_beat_fallback_warnings"] = fallback_warnings
+                annotated_recent.append(item)
+            recent = annotated_recent
             history = conn.execute("""
                 WITH ranked AS (
                     SELECT snapshot_id, market_slug, captured_at,
@@ -912,6 +951,52 @@ def current_contract():
                     LIMIT 3
                 """, ('15m', now, now)).fetchall()
             result = select_canonical_open_contract(candidates, now)
+            # Phase A: attempt authoritative Price to Beat from the selected
+            # contract's own assetPriceTerms when the row carries metadata.
+            ptb_payload = {
+                "status": "UNAVAILABLE",
+                "value": None,
+                "reason": "no_open_contract",
+                "source_field": None,
+            }
+            if result.get("status") == "OPEN" and result.get("contract"):
+                identity = result["contract"].get("market_slug") or result["contract"].get("identity")
+                matched = next((c for c in candidates if str(c.get("market_slug")) == str(identity)), None)
+                if matched is not None:
+                    meta = matched.get("metadata")
+                    if isinstance(meta, str):
+                        import json as _json
+                        try:
+                            meta = _json.loads(meta)
+                        except Exception:
+                            meta = {}
+                    market_obj = {
+                        "slug": matched.get("market_slug"),
+                        "market_slug": matched.get("market_slug"),
+                        "metadata": meta if isinstance(meta, dict) else {},
+                        "assetPriceTerms": (meta or {}).get("assetPriceTerms") if isinstance(meta, dict) else None,
+                    }
+                    # Prefer nested assetPriceTerms on metadata when present
+                    if not market_obj["assetPriceTerms"] and isinstance(meta, dict):
+                        market_obj["assetPriceTerms"] = meta.get("assetPriceTerms")
+                    ptb = extract_price_to_beat(
+                        market_obj,
+                        provenance_trusted=False,  # market_contracts.metadata producer/refresh unverified
+                    )
+                    ptb_payload = {
+                        "status": ptb.status,
+                        "value": ptb.value,
+                        "currency": ptb.currency,
+                        "reason": ptb.reason,
+                        "source_field": ptb.source_field,
+                        "index_symbol": ptb.index_symbol,
+                        "window_start": ptb.window_start,
+                        "window_end": ptb.window_end,
+                        "notes": list(ptb.notes),
+                    }
+                else:
+                    ptb_payload["reason"] = "selected_contract_metadata_not_in_candidates"
+            result["price_to_beat"] = ptb_payload
         except Exception:
             logging.error("endpoint=current_contract event=query_failed")
             return jsonify({"ok": False, "status": "ERROR",
@@ -922,6 +1007,13 @@ def current_contract():
     result["research_only"] = True
     result["live_trading_enabled"] = False
     result["candidate_count"] = len(candidates)
+    if "price_to_beat" not in result:
+        result["price_to_beat"] = {
+            "status": "UNAVAILABLE",
+            "value": None,
+            "reason": result.get("reason") or "database_unavailable",
+            "source_field": None,
+        }
     return jsonify(result)
 
 
