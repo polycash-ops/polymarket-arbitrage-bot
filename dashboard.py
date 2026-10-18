@@ -217,7 +217,7 @@ async function refreshOracleTrackB(){
   put("oracleCoverageMeta",(m.entries??0)+" entries / "+(m.eligible_opportunities??0)+" eligible opportunities");
   put("oracleEntriesSkips",(m.entries??0)+" / "+(m.skips??0));
   put("oraclePending",(m.pending??0)+" pending · "+(m.excluded??m.skips??0)+" excluded/skipped");
-  put("oracleVersion",d.model_version||"—");const lr=d.latest_learning_run;let ls=d.learning_status||"Baseline/learning status unavailable";if(lr)ls+=" · baseline/candidate eval "+(lr.baseline_accuracy==null?"—":(100*Number(lr.baseline_accuracy)).toFixed(1)+"%")+"/"+(lr.candidate_accuracy==null?"—":(100*Number(lr.candidate_accuracy)).toFixed(1)+"%")+" · coverage "+(lr.candidate_coverage==null?"—":(100*Number(lr.candidate_coverage)).toFixed(1)+"%");put("oracleLearning",ls);
+  put("oracleVersion",d.model_version||"—");const lr=d.latest_learning_run;let ls=d.learning_status||"Baseline/learning status unavailable";if(lr)ls+=" · train "+(lr.training_samples??0)+" / validation "+(lr.validation_samples??0)+" · cutoff "+fmtTime(lr.training_cutoff)+" · baseline/candidate "+(lr.baseline_accuracy==null?"—":(100*Number(lr.baseline_accuracy)).toFixed(1)+"%")+"/"+(lr.candidate_accuracy==null?"—":(100*Number(lr.candidate_accuracy)).toFixed(1)+"%")+" · coverage "+(lr.candidate_coverage==null?"—":(100*Number(lr.candidate_coverage)).toFixed(1)+"%")+" · rollback "+(lr.rollback_version||"—");put("oracleLearning",ls);
   put("oracleMessage",d.message||"Only authoritative verified outcomes count toward Oracle entry accuracy.");
   const body=el("oracleRows");body.replaceChildren();const items=Array.isArray(d.entries)?d.entries:[];
   if(!items.length){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=9;td.className="empty";td.textContent="No Oracle decisions recorded yet. Metrics remain unavailable until eligible entries resolve.";tr.appendChild(td);body.appendChild(tr)}
@@ -360,7 +360,8 @@ def oracle_track_b_status():
             """).fetchone()
             learning = conn.execute("""
               SELECT accepted,reason,training_cutoff,training_samples,validation_samples,
-                     baseline_accuracy,candidate_accuracy,baseline_coverage,candidate_coverage
+                     baseline_accuracy,candidate_accuracy,baseline_coverage,candidate_coverage,
+                     candidate_version,rollback_version
               FROM oracle_learning_runs ORDER BY created_at DESC,id DESC LIMIT 1
             """).fetchone() if conn.execute("SELECT to_regclass('public.oracle_learning_runs') AS t").fetchone()["t"] else None
             recent = conn.execute("""
