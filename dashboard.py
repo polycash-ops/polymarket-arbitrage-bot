@@ -231,7 +231,7 @@ async function refreshOracleTrackB(){
     (x.decision||"—")+" · "+(x.reason||"—"),
     (x.paper_entry_status||"—")+" · "+(x.fill_price==null?"fill unavailable":"fill "+Number(x.fill_price).toFixed(4)),
     (x.outcome||"PENDING")+(x.correct===true?" · CORRECT":x.correct===false?" · INCORRECT":"")
-  ];values.forEach((v,i)=>{const td=document.createElement("td");td.textContent=String(v);if(i===2)td.className=x.source_direction==="UP"?"good":x.source_direction==="DOWN"?"bad":"";if(i===3)td.className=direction==="UP"?"good":direction==="DOWN"?"bad":"";if(i===4)td.className=x.decision==="ENTER"?"good":"warn";if(i===6)td.className=x.correct===true?"good":x.correct===false?"bad":"warn";tr.appendChild(td)});body.appendChild(tr)});
+  ];values.forEach((v,i)=>{const td=document.createElement("td");td.textContent=String(v);if(i===3)td.className=x.source_direction==="UP"?"good":x.source_direction==="DOWN"?"bad":"";if(i===4)td.className=direction==="UP"?"good":direction==="DOWN"?"bad":"";if(i===5)td.className=x.source_direction&&x.oracle_direction?(x.source_direction===x.oracle_direction?"good":"bad"):"warn";if(i===6)td.className=x.decision==="ENTER"?"good":"warn";if(i===8)td.className=x.correct===true?"good":x.correct===false?"bad":"warn";tr.appendChild(td)});body.appendChild(tr)});
  }catch(e){put("oracleStatus","ERROR");const badge=el("oracleStatus");if(badge)badge.className="badge bad";put("oracleMessage","Oracle Track B API unavailable: "+String(e.message||e))}
 }
 
