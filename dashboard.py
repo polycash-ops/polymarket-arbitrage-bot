@@ -90,6 +90,20 @@ h1{font-size:clamp(1.5rem,4vw,2.2rem);line-height:1.15;margin:0 0 8px;letter-spa
  <div class="section-head"><div><h2>Recent reservoir observations</h2><p class="small">Price to beat is shown only when verified Polymarket US contract provenance is available. Exchange reference prices and stored observations are not authoritative PTB values.</p></div><span class="small" id="refreshTime">Waiting for first refresh</span></div>
  <div class="table-wrap"><table><thead><tr><th>Captured</th><th>Timeframe</th><th>Checkpoint</th><th>Contract</th><th>Forecast</th><th>UP probability</th><th>DOWN probability</th><th>Price to beat</th><th>Market midpoint</th><th>Order-book depth (bid / ask · imbalance)</th><th>Exchange quotes (bid / ask · age)</th><th>Outcome</th><th>Brier</th><th>Learned</th></tr></thead><tbody id="bioRows"><tr><td colspan="14" class="empty">Connecting to reservoir telemetry…</td></tr></tbody></table></div>
 </div></section>
+
+<section class="section panel"><div class="panel-inner">
+ <div class="section-head"><div><h2>FlyWire Reservoir Oracle · Track B · PAPER ONLY</h2><p class="small">Independent Oracle decisions sourced from the Biological Reservoir main-track forecasts. Entry checkpoint = official contract start + 7 minutes; default execution tolerance 30 seconds. No exchange-derived settlement or live orders.</p></div><span id="oracleStatus" class="badge warn">INITIALIZING</span></div>
+ <div class="cards">
+  <article class="card"><div class="metric-label">Rolling accuracy · latest 100 resolved entries</div><div class="metric" id="oracleRolling">—</div><div class="metric-sub" id="oracleRollingMeta">No resolved Oracle entries yet</div></article>
+  <article class="card"><div class="metric-label">Lifetime accuracy</div><div class="metric" id="oracleLifetime">—</div><div class="metric-sub" id="oracleLifetimeMeta">Correct / incorrect / resolved</div></article>
+  <article class="card"><div class="metric-label">Coverage</div><div class="metric" id="oracleCoverage">—</div><div class="metric-sub" id="oracleCoverageMeta">Entries / eligible opportunities</div></article>
+  <article class="card"><div class="metric-label">Entries / skips</div><div class="metric" id="oracleEntriesSkips">—</div><div class="metric-sub" id="oraclePending">Pending: —</div></article>
+  <article class="card"><div class="metric-label">Active Oracle version</div><div class="metric" id="oracleVersion">baseline</div><div class="metric-sub" id="oracleLearning">Baseline follows eligible source direction; no initial trained weights</div></article>
+ </div>
+ <p class="small" id="oracleMessage">Waiting for Oracle Track B persistence.</p>
+ <div class="table-wrap"><table><thead><tr><th>Checkpoint · ET</th><th>Official contract / PTB</th><th>Source forecast</th><th>Oracle signal / score</th><th>Decision / reason</th><th>Paper / fill status</th><th>Outcome</th></tr></thead><tbody id="oracleRows"><tr><td colspan="7" class="empty">No Oracle decisions recorded yet.</td></tr></tbody></table></div>
+</div></section>
+
 <section class="section panel"><div class="panel-inner">
  <div class="section-head"><div><h2>Verified contracts</h2><p class="small">Only contracts with an explicit verified UP/DOWN settlement are listed. Pending or inferred outcomes are excluded.</p></div><span class="small" id="verifiedRefresh">Waiting for verified outcomes</span></div>
  <div class="cards" style="margin-bottom:12px">
@@ -187,6 +201,38 @@ async function refreshLiveQuotes(){
  }catch(e){if(!isCurrentLiveQuoteResponse(requestId,liveQuoteRequestId))return;put("quoteRefresh","Live quote refresh failed: "+String(e.message||e))}
 }
 
+
+async function refreshOracleTrackB(){
+ try{
+  const r=await fetch("/api/oracle-track-b?ts="+Date.now(),{cache:"no-store"});
+  const d=await r.json();if(!r.ok)throw new Error(d.message||("HTTP "+r.status));
+  const m=d.metrics||{};const badge=el("oracleStatus");
+  put("oracleStatus",d.status||"INITIALIZING");
+  if(badge)badge.className="badge "+(d.status==="RECORDING"?"good":d.status==="ERROR"?"bad":"warn");
+  put("oracleRolling",m.rolling_100_accuracy_pct==null?"—":Number(m.rolling_100_accuracy_pct).toFixed(1)+"%");
+  put("oracleRollingMeta",(m.rolling_100_correct??0)+" correct / "+(m.rolling_100_resolved??0)+" resolved");
+  put("oracleLifetime",m.accuracy_pct==null?"—":Number(m.accuracy_pct).toFixed(1)+"%");
+  put("oracleLifetimeMeta",(m.correct??0)+" correct / "+(m.incorrect??0)+" incorrect / "+(m.resolved??0)+" resolved");
+  put("oracleCoverage",m.coverage_pct==null?"—":Number(m.coverage_pct).toFixed(1)+"%");
+  put("oracleCoverageMeta",(m.entries??0)+" entries / "+(m.eligible_opportunities??0)+" eligible opportunities");
+  put("oracleEntriesSkips",(m.entries??0)+" / "+(m.skips??0));
+  put("oraclePending",(m.pending??0)+" pending · "+(m.excluded??m.skips??0)+" excluded/skipped");
+  put("oracleVersion",d.model_version||"—");put("oracleLearning",d.learning_status||"Baseline/learning status unavailable");
+  put("oracleMessage",d.message||"Only authoritative verified outcomes count toward Oracle entry accuracy.");
+  const body=el("oracleRows");body.replaceChildren();const items=Array.isArray(d.entries)?d.entries:[];
+  if(!items.length){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=7;td.className="empty";td.textContent="No Oracle decisions recorded yet. Metrics remain unavailable until eligible entries resolve.";tr.appendChild(td);body.appendChild(tr)}
+  items.forEach(x=>{const tr=document.createElement("tr");const direction=x.oracle_direction||"—";const values=[
+    fmtTime(x.entry_at),
+    (x.official_market_id||x.market_slug||"—")+" · PTB "+(x.official_ptb==null?"—":Number(x.official_ptb).toFixed(2)),
+    (x.source_direction||"—")+" · "+fmtTime(x.source_forecast_at),
+    direction+" · score "+(x.oracle_score==null?"—":(100*Number(x.oracle_score)).toFixed(1)+"%"),
+    (x.decision||"—")+" · "+(x.reason||"—"),
+    (x.paper_entry_status||"—")+" · "+(x.fill_price==null?"fill unavailable":"fill "+Number(x.fill_price).toFixed(4)),
+    (x.outcome||"PENDING")+(x.correct===true?" · CORRECT":x.correct===false?" · INCORRECT":"")
+  ];values.forEach((v,i)=>{const td=document.createElement("td");td.textContent=String(v);if(i===2)td.className=x.source_direction==="UP"?"good":x.source_direction==="DOWN"?"bad":"";if(i===3)td.className=direction==="UP"?"good":direction==="DOWN"?"bad":"";if(i===4)td.className=x.decision==="ENTER"?"good":"warn";if(i===6)td.className=x.correct===true?"good":x.correct===false?"bad":"warn";tr.appendChild(td)});body.appendChild(tr)});
+ }catch(e){put("oracleStatus","ERROR");const badge=el("oracleStatus");if(badge)badge.className="badge bad";put("oracleMessage","Oracle Track B API unavailable: "+String(e.message||e))}
+}
+
 async function refreshVerifiedContracts(){
  try{
   const r=await fetch("/api/verified-contracts?ts="+Date.now(),{cache:"no-store"});const d=await r.json();if(!r.ok)throw new Error(d.message||("HTTP "+r.status));
@@ -197,7 +243,7 @@ async function refreshVerifiedContracts(){
   put("verifiedRefresh","Updated "+new Date().toLocaleTimeString("en-US",{timeZone:"America/New_York"})+" ET");
  }catch(e){put("verifiedRefresh","Could not load verified outcomes: "+String(e.message||e))}
 }
-clock();setInterval(clock,1000);refreshReservoir();setInterval(refreshReservoir,10000);refreshLiveQuotes();setInterval(refreshLiveQuotes,5000);refreshVerifiedContracts();setInterval(refreshVerifiedContracts,15000);
+clock();setInterval(clock,1000);refreshReservoir();setInterval(refreshReservoir,10000);refreshLiveQuotes();setInterval(refreshLiveQuotes,5000);refreshVerifiedContracts();setInterval(refreshVerifiedContracts,15000);refreshOracleTrackB();setInterval(refreshOracleTrackB,10000);
 </script></body></html>"""
 
 
