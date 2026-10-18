@@ -6,7 +6,7 @@ import math
 from typing import Any
 
 TRUSTED_US_SOURCE = "polymarket_us_official"
-MAX_RETRIEVAL_AGE_SECONDS = 30
+MAX_RETRIEVAL_AGE_SECONDS = 120
 
 
 def unavailable_price_to_beat(reason: str = "No trusted Polymarket US price-to-beat source is configured.") -> dict[str, Any]:
