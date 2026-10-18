@@ -275,7 +275,7 @@ class MarketMonitor:
                     slug = str(market.get("slug") or "")
                     q, s = question.lower(), slug.lower()
                     is_btc = "bitcoin" in q or "btc" in q or "bitcoin" in s or "btc" in s
-                    is_directional = ("up or down" in q or ("up" in q and "down" in q))
+                    is_directional = ("up or down" in q or ("up" in q and "down" in q) or ("up" in s and "down" in s))
                     is_15m = is_btc and (
                         ("15m" in s) or ("15 minute" in q) or ("15m" in q)
                     ) and is_directional
