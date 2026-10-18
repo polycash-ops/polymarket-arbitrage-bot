@@ -22,11 +22,12 @@ class FakeResult:
 
 
 class FakeConnection:
-    def __init__(self, *, model_columns=(), verified_count=2, correct_count=1, price_rows=None):
+    def __init__(self, *, model_columns=(), verified_count=2, correct_count=1, price_rows=None, canonical_rows=None):
         self.model_columns = set(model_columns)
         self.verified_count = verified_count
         self.correct_count = correct_count
         self.price_rows = list(price_rows or [])
+        self.canonical_rows = list(canonical_rows or [])
         self.sql = []
         self.params = []
 
@@ -39,6 +40,8 @@ class FakeConnection:
     def execute(self, query, params=None):
         self.sql.append(query)
         self.params.append(params)
+        if "FROM public.market_contracts" in query:
+            return FakeResult(rows=self.canonical_rows)
         if "to_regclass('public.snapshots')" in query:
             return FakeResult(row={"table_name": "snapshots"})
         if "FROM bounded ORDER BY captured_at ASC" in query:
@@ -112,10 +115,28 @@ class ReservoirDashboardTelemetryTests(unittest.TestCase):
 
     def test_contract_price_series_is_exact_slug_bounded_and_timestamped(self):
         slug = "cpc-btc-updown-15m-2026-10-17-1945z"
-        now = datetime.now(timezone.utc)
-        start = now - timedelta(minutes=2)
+        start = datetime(2026, 10, 17, 19, 45, tzinfo=timezone.utc)
         end = start + timedelta(minutes=15)
-        conn = FakeConnection(price_rows=[
+        evaluation_time = start + timedelta(minutes=2)
+        canonical = {
+            "market_slug": slug,
+            "market_id": "1517399",
+            "timeframe": "15m",
+            "title": "BTC Up or Down 15m",
+            "active": True,
+            "window_start": start,
+            "window_end": end,
+            "metadata": {
+                "marketType": "ASSET_PRICE_MARKET_TYPE_UP_DOWN",
+                "assetPriceTerms": {
+                    "asset": {"symbol": "BTC"},
+                    "horizon": "15m",
+                    "windowStart": start.isoformat(),
+                    "windowEnd": end.isoformat(),
+                },
+            },
+        }
+        conn = FakeConnection(canonical_rows=[canonical], price_rows=[
             {"market_slug": slug, "captured_at": start + timedelta(minutes=1),
              "midpoint": 0.48, "window_start": start, "window_end": end},
             {"market_slug": slug, "captured_at": start + timedelta(minutes=2),
@@ -124,14 +145,22 @@ class ReservoirDashboardTelemetryTests(unittest.TestCase):
         with patch.dict("os.environ", {"CONNECTOME_DATABASE_URL": "postgresql://test"}), \
              patch("psycopg.connect", return_value=conn):
             response = self.dashboard.app.test_client().get(
-                "/api/contract-price-series?market_slug=" + slug
+                "/api/contract-price-series?market_slug=" + slug,
+                headers={"X-Evaluation-Time": evaluation_time.isoformat()},
             )
         self.assertEqual(response.status_code, 200)
         body = response.get_json()
         self.assertEqual(body["status"], "AVAILABLE")
         self.assertEqual(body["contract_identity"], slug)
+        self.assertEqual(body["window_start"], start.isoformat())
+        self.assertEqual(body["window_end"], end.isoformat())
         self.assertEqual(body["point_count"], 2)
-        self.assertEqual(conn.params[-1], (slug,))
+        self.assertEqual([point["captured_at"] for point in body["points"]], [
+            (start + timedelta(minutes=1)).isoformat(),
+            (start + timedelta(minutes=2)).isoformat(),
+        ])
+        self.assertEqual([point["midpoint"] for point in body["points"]], [0.48, 0.51])
+        self.assertEqual(conn.params[-1], (slug, start, end))
         self.assertIn("LIMIT 500", conn.sql[-1])
         self.assertIn("ORDER BY captured_at DESC, id DESC", conn.sql[-1])
         self.assertIn("ORDER BY captured_at ASC, id ASC", conn.sql[-1])
