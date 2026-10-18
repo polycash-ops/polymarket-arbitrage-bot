@@ -46,14 +46,18 @@ class OraclePostgresStore:
                    benchmark_name, benchmark_qualifier, benchmark_symbol, benchmark_interval,
                    benchmark_quote_currency, benchmark_price, benchmark_source_timestamp,
                    benchmark_acquired_at, benchmark_status, current_price, current_price_timestamp,
+                   current_signal, current_signal_reason, strategy_version,
                    candle_close_price, candle_close_source_timestamp, candle_finalized,
                    outcome, heartbeat_at, updated_at)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'available',%s,%s,%s,%s,%s,%s,%s,now())
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'available',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,now())
                 ON CONFLICT (window_start) DO UPDATE SET
                   contract_id = COALESCE(signal_oracle_windows.contract_id, EXCLUDED.contract_id),
                   contract_verified = signal_oracle_windows.contract_verified OR EXCLUDED.contract_verified,
                   current_price = EXCLUDED.current_price,
                   current_price_timestamp = EXCLUDED.current_price_timestamp,
+                  current_signal = EXCLUDED.current_signal,
+                  current_signal_reason = EXCLUDED.current_signal_reason,
+                  strategy_version = EXCLUDED.strategy_version,
                   candle_close_price = CASE WHEN EXCLUDED.candle_finalized THEN EXCLUDED.candle_close_price ELSE signal_oracle_windows.candle_close_price END,
                   candle_close_source_timestamp = CASE WHEN EXCLUDED.candle_finalized THEN EXCLUDED.candle_close_source_timestamp ELSE signal_oracle_windows.candle_close_source_timestamp END,
                   candle_finalized = signal_oracle_windows.candle_finalized OR EXCLUDED.candle_finalized,
@@ -66,12 +70,27 @@ class OraclePostgresStore:
                 benchmark["interval"], benchmark["quote_currency"], benchmark["benchmark_price"],
                 benchmark["benchmark_source_timestamp"], benchmark["acquired_at"],
                 benchmark.get("current_price"), benchmark.get("current_price_timestamp"),
+                benchmark.get("current_signal", "NO TRADE"), benchmark.get("current_signal_reason", "Oracle strategy not configured"),
+                benchmark.get("strategy_version", "oracle-logistic-head-v1"),
                 benchmark.get("close_price") if benchmark.get("finalized") else None,
                 benchmark.get("candle_close_source_timestamp") if benchmark.get("finalized") else None,
                 bool(benchmark.get("finalized")), benchmark.get("outcome") if benchmark.get("finalized") else None,
                 heartbeat_at or datetime.now(timezone.utc).isoformat(),
             )).fetchone()
         return dict(row)
+
+    def pending_windows(self, limit: int = 20) -> list[dict[str, Any]]:
+        """Recover previously observed windows after restart; no synthetic IDs."""
+        with self._connect() as conn:
+            rows = conn.execute("""
+                SELECT window_start, window_end, contract_id, contract_verified
+                FROM signal_oracle_windows
+                WHERE candle_finalized=false OR EXISTS (
+                  SELECT 1 FROM signal_oracle_predictions p
+                  WHERE p.window_start=signal_oracle_windows.window_start AND p.status='pending')
+                ORDER BY window_start DESC LIMIT %s
+            """, (max(1, min(100, int(limit))),)).fetchall()
+        return [dict(row) for row in rows]
 
     def record_prediction(self, *, window_start: str, window_end: str, issued_at: str,
                           action: str, score: float | None, features: list[float],
