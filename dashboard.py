@@ -227,7 +227,7 @@ async function refreshOracle(){
   put("oracleSignal",w.current_signal||latest.action||"NO TRADE");
   put("oracleReason",w.current_signal_reason||latest.reason||"No scored prediction yet");
   put("oraclePtb",w.benchmark_price==null?"N/A":Number(w.benchmark_price).toLocaleString("en-US")+" USDT/BTC");
-  put("oraclePtbTime",w.benchmark_source_timestamp?"Candle open: "+fmtTime(w.benchmark_source_timestamp)+" · acquired: "+fmtTime(w.benchmark_acquired_at):"Benchmark unavailable");
+  put("oraclePtbTime",w.benchmark_source_timestamp?"Candle open: "+fmtTime(w.benchmark_source_timestamp)+" · acquired: "+fmtTime(w.benchmark_acquired_at):"Benchmark unavailable"+(w.benchmark_reason?": "+w.benchmark_reason:""));
   put("oracleCurrent",w.current_price==null?"N/A":Number(w.current_price).toLocaleString("en-US")+" USDT/BTC");
   put("oracleCurrentTime",w.current_price_timestamp?"Quote acquired: "+fmtTime(w.current_price_timestamp):"Quote timestamp unavailable");
   put("oracleWindow",w.window_start?fmtTime(w.window_start):"N/A");
