@@ -303,6 +303,104 @@ def biological_reservoir_status():
         return jsonify({"ok": False, "status": "ERROR", "message": type(exc).__name__ + ": " + str(exc), "model": None, "observations": {}, "recent": []}), 500
 
 
+@app.get("/api/oracle-track-b")
+def oracle_track_b_status():
+    """Read the independent paper-only Oracle Track B ledger from the shared paid DB."""
+    url = os.getenv("CONNECTOME_DATABASE_URL")
+    if not url:
+        return jsonify({"ok": False, "schema_ready": False, "status": "NOT CONFIGURED",
+                        "message": "CONNECTOME_DATABASE_URL is not configured on this dashboard service.",
+                        "metrics": {}, "entries": [], "live_trading_enabled": False}), 503
+    try:
+        import psycopg
+        from psycopg.rows import dict_row
+        with psycopg.connect(url, connect_timeout=4, row_factory=dict_row) as conn:
+            ready = conn.execute("SELECT to_regclass('public.oracle_decisions') AS decisions, to_regclass('public.oracle_source_forecasts') AS forecasts").fetchone()
+            if not ready["decisions"] or not ready["forecasts"]:
+                return jsonify({"ok": True, "schema_ready": False, "status": "INITIALIZING",
+                    "model_version": "baseline-follow-main-v1", "baseline": True,
+                    "learning_status": "Waiting for worker schema initialization; baseline has no trained weights.",
+                    "metrics": {}, "entries": [], "live_trading_enabled": False,
+                    "message": "Oracle tables are not initialized. No placeholder metrics are fabricated."})
+            stats = conn.execute("""
+              SELECT COUNT(*) AS eligible_opportunities,
+                     COUNT(*) FILTER (WHERE decision='ENTER') AS entries,
+                     COUNT(*) FILTER (WHERE decision='SKIP') AS skips,
+                     COUNT(*) FILTER (WHERE decision='ENTER' AND outcome IN ('UP','DOWN')) AS resolved,
+                     COUNT(*) FILTER (WHERE decision='ENTER' AND outcome IN ('UP','DOWN') AND correct) AS correct,
+                     COUNT(*) FILTER (WHERE decision='ENTER' AND outcome IN ('UP','DOWN') AND NOT correct) AS incorrect,
+                     COUNT(*) FILTER (WHERE decision='ENTER' AND outcome IS NULL) AS pending,
+                     COUNT(*) FILTER (WHERE decision='ENTER' AND paper_entry_status='FILLED_SIMULATED') AS simulated_fills,
+                     COUNT(*) FILTER (WHERE decision='ENTER')::float / NULLIF(COUNT(*),0) AS coverage,
+                     MAX(updated_at) AS latest_decision_at
+              FROM oracle_decisions
+            """).fetchone()
+            rolling = conn.execute("""
+              SELECT COUNT(*) AS resolved,
+                     COUNT(*) FILTER (WHERE correct) AS correct,
+                     COUNT(*) FILTER (WHERE NOT correct) AS incorrect
+              FROM (
+                SELECT correct FROM oracle_decisions
+                WHERE decision='ENTER' AND outcome IN ('UP','DOWN')
+                ORDER BY resolved_at DESC,market_slug DESC LIMIT 100
+              ) q
+            """).fetchone()
+            active = conn.execute("""
+              SELECT version,status,trained_at,training_cutoff,training_samples,
+                     validation_samples,validation_accuracy,baseline_accuracy,
+                     validation_coverage,baseline_coverage,details
+              FROM oracle_model_versions
+              WHERE status IN ('ACTIVE','PROMOTED','BASELINE')
+              ORDER BY CASE status WHEN 'ACTIVE' THEN 0 WHEN 'PROMOTED' THEN 1 ELSE 2 END,
+                       trained_at DESC NULLS LAST,created_at DESC LIMIT 1
+            """).fetchone()
+            learning = conn.execute("""
+              SELECT accepted,reason,training_cutoff,training_samples,validation_samples,
+                     baseline_accuracy,candidate_accuracy,baseline_coverage,candidate_coverage
+              FROM oracle_learning_runs ORDER BY created_at DESC,id DESC LIMIT 1
+            """).fetchone() if conn.execute("SELECT to_regclass('public.oracle_learning_runs') AS t").fetchone()["t"] else None
+            recent = conn.execute("""
+              SELECT market_slug,official_market_id,official_ptb,window_start,window_end,entry_at,
+                     source_direction,oracle_direction,oracle_score,oracle_model_version,
+                     decision,reason,source_forecast_at,source_age_seconds,paper_entry_status,
+                     fill_price,outcome,resolved_at,correct,created_at,updated_at
+              FROM oracle_decisions ORDER BY entry_at DESC,market_slug DESC LIMIT 100
+            """).fetchall()
+            latest_forecast = conn.execute("SELECT MAX(recorded_at) AS latest FROM oracle_source_forecasts").fetchone()["latest"]
+        resolved_n = int(stats["resolved"] or 0)
+        correct_n = int(stats["correct"] or 0)
+        rolling_n = int(rolling["resolved"] or 0)
+        rolling_correct = int(rolling["correct"] or 0)
+        latest_values = [v for v in (stats["latest_decision_at"], latest_forecast) if v is not None]
+        latest = max(latest_values) if latest_values else None
+        age = max(0, (datetime.now().astimezone() - latest.astimezone()).total_seconds()) if latest else None
+        status = "RECORDING" if age is not None and age <= 180 else "STALE" if age is not None else "INITIALIZING"
+        metrics = {k: stats[k] for k in stats.keys()}
+        metrics["accuracy_pct"] = round(100 * correct_n / resolved_n, 2) if resolved_n else None
+        metrics["rolling_100_resolved"] = rolling_n
+        metrics["rolling_100_correct"] = rolling_correct
+        metrics["rolling_100_incorrect"] = int(rolling["incorrect"] or 0)
+        metrics["rolling_100_accuracy_pct"] = round(100 * rolling_correct / rolling_n, 2) if rolling_n else None
+        metrics["coverage_pct"] = round(100 * float(stats["coverage"]), 2) if stats["coverage"] is not None else None
+        baseline = bool(active and active["status"] == "BASELINE")
+        learning_status = ("No learning run yet; collecting authoritative resolved entries."
+                           if not learning else str(learning["reason"]))
+        return jsonify({"ok": True, "schema_ready": True, "status": status,
+            "agent": "FlyWire Reservoir Oracle Track B",
+            "source_track": "FlyWire Biological Reservoir main track",
+            "model_version": active["version"] if active else "baseline-follow-main-v1",
+            "baseline": baseline, "active_model": active, "latest_learning_run": learning,
+            "learning_status": learning_status, "metrics": metrics, "entries": recent,
+            "entry_offset_seconds": 420, "entry_tolerance_seconds": 30,
+            "research_only": True, "live_trading_enabled": False,
+            "message": "Only ENTER decisions with authoritative verified UP/DOWN outcomes count toward accuracy. SKIP is diagnostic; simulated fill remains unavailable without verified quotes and explicit assumptions."})
+    except Exception as exc:
+        logging.exception("Oracle Track B telemetry endpoint failed")
+        return jsonify({"ok": False, "schema_ready": False, "status": "ERROR",
+            "message": type(exc).__name__ + ": " + str(exc), "metrics": {}, "entries": [],
+            "live_trading_enabled": False}), 500
+
+
 @app.get("/api/verified-contracts")
 def verified_contracts():
     """List only reservoir records carrying an explicit verified UP/DOWN outcome."""
