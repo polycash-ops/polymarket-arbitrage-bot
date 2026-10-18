@@ -324,25 +324,26 @@ def oracle_track_b_status():
                     "message": "Oracle tables are not initialized. No placeholder metrics are fabricated."})
             stats = conn.execute("""
               SELECT COUNT(*) AS eligible_opportunities,
-                     COUNT(*) FILTER (WHERE decision='ENTER') AS entries,
-                     COUNT(*) FILTER (WHERE decision='SKIP') AS skips,
-                     COUNT(*) FILTER (WHERE decision='ENTER' AND outcome IN ('UP','DOWN')) AS resolved,
-                     COUNT(*) FILTER (WHERE decision='ENTER' AND outcome IN ('UP','DOWN') AND correct) AS correct,
-                     COUNT(*) FILTER (WHERE decision='ENTER' AND outcome IN ('UP','DOWN') AND NOT correct) AS incorrect,
-                     COUNT(*) FILTER (WHERE decision='ENTER' AND outcome IS NULL) AS pending,
-                     COUNT(*) FILTER (WHERE decision='ENTER' AND paper_entry_status='FILLED_SIMULATED') AS simulated_fills,
-                     COUNT(*) FILTER (WHERE decision='ENTER')::float / NULLIF(COUNT(*),0) AS coverage,
-                     MAX(updated_at) AS latest_decision_at
-              FROM oracle_decisions
+                     COUNT(*) FILTER (WHERE d.decision='ENTER') AS entries,
+                     COUNT(*) FILTER (WHERE d.decision='SKIP') AS skips,
+                     COUNT(*) FILTER (WHERE e.outcome IN ('UP','DOWN')) AS resolved,
+                     COUNT(*) FILTER (WHERE e.outcome IN ('UP','DOWN') AND e.correct) AS correct,
+                     COUNT(*) FILTER (WHERE e.outcome IN ('UP','DOWN') AND NOT e.correct) AS incorrect,
+                     COUNT(*) FILTER (WHERE e.id IS NOT NULL AND e.outcome IS NULL) AS pending,
+                     COUNT(*) FILTER (WHERE e.fill_status='SIMULATED') AS simulated_fills,
+                     COUNT(*) FILTER (WHERE d.decision='ENTER')::float / NULLIF(COUNT(*),0) AS coverage,
+                     MAX(d.updated_at) AS latest_decision_at
+              FROM oracle_decisions d LEFT JOIN oracle_paper_entries e USING (market_slug)
             """).fetchone()
             rolling = conn.execute("""
               SELECT COUNT(*) AS resolved,
                      COUNT(*) FILTER (WHERE correct) AS correct,
                      COUNT(*) FILTER (WHERE NOT correct) AS incorrect
               FROM (
-                SELECT correct FROM oracle_decisions
-                WHERE decision='ENTER' AND outcome IN ('UP','DOWN')
-                ORDER BY resolved_at DESC,market_slug DESC LIMIT 100
+                SELECT e.correct FROM oracle_paper_entries e
+                JOIN oracle_decisions d USING (market_slug)
+                WHERE d.decision='ENTER' AND e.outcome IN ('UP','DOWN')
+                ORDER BY e.resolved_at DESC,e.market_slug DESC LIMIT 100
               ) q
             """).fetchone()
             active = conn.execute("""
@@ -360,11 +361,13 @@ def oracle_track_b_status():
               FROM oracle_learning_runs ORDER BY created_at DESC,id DESC LIMIT 1
             """).fetchone() if conn.execute("SELECT to_regclass('public.oracle_learning_runs') AS t").fetchone()["t"] else None
             recent = conn.execute("""
-              SELECT market_slug,official_market_id,official_ptb,window_start,window_end,entry_at,
-                     source_direction,oracle_direction,oracle_score,oracle_model_version,
-                     decision,reason,source_forecast_at,source_age_seconds,paper_entry_status,
-                     fill_price,outcome,resolved_at,correct,created_at,updated_at
-              FROM oracle_decisions ORDER BY entry_at DESC,market_slug DESC LIMIT 100
+              SELECT d.market_slug,d.official_market_id,d.official_ptb,d.window_start,d.window_end,d.entry_at,
+                     d.source_direction,d.oracle_direction,d.oracle_score,d.oracle_model_version,
+                     d.decision,d.reason,d.source_forecast_at,d.source_age_seconds,
+                     COALESCE(e.fill_status,d.paper_entry_status) AS paper_entry_status,
+                     e.fill_price,e.outcome,e.resolved_at,e.correct,d.created_at,d.updated_at
+              FROM oracle_decisions d LEFT JOIN oracle_paper_entries e USING (market_slug)
+              ORDER BY d.entry_at DESC,d.market_slug DESC LIMIT 100
             """).fetchall()
             latest_forecast = conn.execute("SELECT MAX(recorded_at) AS latest FROM oracle_source_forecasts").fetchone()["latest"]
         resolved_n = int(stats["resolved"] or 0)
