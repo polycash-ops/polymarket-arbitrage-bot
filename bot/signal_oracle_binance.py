@@ -148,3 +148,12 @@ def fetch_current_quote(*, now: datetime | None = None,
         raise ValueError("Binance current ticker price must be finite and positive")
     return {"symbol": SYMBOL, "price": price, "quote_timestamp": acquired.isoformat(),
             "quote_timestamp_type": "local acquisition time; Binance ticker response has no source timestamp"}
+
+def entry_cutoff_open(now: datetime, window_end: datetime, cutoff_seconds: int = 60) -> bool:
+    """Whether a forward prediction may still be issued before the configured cutoff."""
+    current = as_utc(now)
+    end = as_utc(window_end)
+    cutoff = max(0, int(cutoff_seconds))
+    remaining = (end - current).total_seconds()
+    return remaining > cutoff
+
