@@ -12,9 +12,11 @@ class CanonicalResolverTests(unittest.TestCase):
             "source": "polymarket_us_official",
             "provenance_verified": True,
             "price_to_beat": 67234.5,
-            "observed_at": (self.now - timedelta(seconds=5)).isoformat(),
-            "contract_start_at": (self.now - timedelta(seconds=10)).isoformat(),
-            "contract_end_at": (self.now + timedelta(minutes=15)).isoformat(),
+            "retrieved_at": (self.now - timedelta(seconds=5)).isoformat(),
+            "contract_start_at": (self.now - timedelta(minutes=10)).isoformat(),
+            "contract_end_at": (self.now + timedelta(minutes=5)).isoformat(),
+            "source_field": "market.assetPriceTerms.priceToBeat",
+            "source_url": "https://gateway.polymarket.us/v1/market/slug/us-contract-123",
         }
 
     def test_default_state_is_explicitly_unavailable(self):
@@ -24,10 +26,11 @@ class CanonicalResolverTests(unittest.TestCase):
         self.assertIsNone(state["contract_id"])
         self.assertIn("trusted Polymarket US", state["reason"])
 
-    def test_accepts_only_fresh_verified_matching_us_contract(self):
+    def test_accepts_fresh_verified_matching_us_contract_during_window(self):
         state = resolve_price_to_beat(self.payload, expected_contract_id="us-contract-123", now=self.now)
         self.assertEqual(state["status"], "verified")
         self.assertEqual(state["price_to_beat"], 67234.5)
+        self.assertIsNone(state.get("observed_at"))
 
     def test_rejects_exchange_or_international_source(self):
         for source in ("BINANCE", "COINBASE", "polymarket_gamma", "polymarket_clob"):
@@ -42,26 +45,28 @@ class CanonicalResolverTests(unittest.TestCase):
             self.assertEqual(state["status"], "unavailable")
             self.assertIsNone(state["price_to_beat"])
 
-    def test_rejects_invalid_price_and_timestamp(self):
+    def test_rejects_invalid_price_and_retrieval_timestamp(self):
         for price in (None, 0, -1, float("nan"), float("inf"), "not-a-price"):
             with self.subTest(price=price):
                 state = resolve_price_to_beat({**self.payload, "price_to_beat": price}, expected_contract_id="us-contract-123", now=self.now)
                 self.assertEqual(state["status"], "unavailable")
-        state = resolve_price_to_beat({**self.payload, "observed_at": "not-a-time"}, expected_contract_id="us-contract-123", now=self.now)
+        state = resolve_price_to_beat({**self.payload, "retrieved_at": "not-a-time"}, expected_contract_id="us-contract-123", now=self.now)
         self.assertEqual(state["status"], "unavailable")
 
-    def test_fixed_target_remains_valid_during_its_active_contract(self):
-        later = self.now + timedelta(minutes=14)
-        state = resolve_price_to_beat(self.payload, expected_contract_id="us-contract-123", now=later)
+    def test_fixed_target_remains_valid_late_in_active_contract(self):
+        later = self.now + timedelta(minutes=4, seconds=50)
+        payload = {**self.payload, "retrieved_at": (later - timedelta(seconds=2)).isoformat()}
+        state = resolve_price_to_beat(payload, expected_contract_id="us-contract-123", now=later)
         self.assertEqual(state["status"], "verified")
         self.assertEqual(state["price_to_beat"], 67234.5)
 
-    def test_rejects_late_future_naive_and_expired_lifecycle_timestamps(self):
+    def test_rejects_stale_future_naive_and_expired_lifecycle_timestamps(self):
         bad_payloads = (
-            {**self.payload, "observed_at": (self.now + timedelta(seconds=3)).isoformat()},
-            {**self.payload, "observed_at": "2026-10-18T11:59:00"},
-            {**self.payload, "observed_at": (self.now + timedelta(minutes=2)).isoformat()},
+            {**self.payload, "retrieved_at": (self.now - timedelta(seconds=45)).isoformat()},
+            {**self.payload, "retrieved_at": (self.now + timedelta(seconds=3)).isoformat()},
+            {**self.payload, "retrieved_at": "2026-10-18T11:59:00"},
             {**self.payload, "contract_end_at": (self.now - timedelta(seconds=1)).isoformat()},
+            {**self.payload, "contract_end_at": (self.now + timedelta(minutes=4)).isoformat()},
         )
         for payload in bad_payloads:
             with self.subTest(payload=payload):

@@ -5,9 +5,11 @@ on:
     paths:
       - "dashboard.py"
       - "canonical_resolver.py"
+      - "polymarket_us_ptb.py"
       - "tests/test_dashboard_safety.py"
       - "tests/test_canonical_resolver.py"
       - "tests/test_ptb_lifecycle.js"
+      - "tests/test_polymarket_us_ptb.py"
       - ".github/workflows/ptb-safety-tests.yml"
   push:
     paths:
