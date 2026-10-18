@@ -153,7 +153,7 @@ function canonicalPtbValue(payload, expectedContractId, nowMs=Date.now()){
  const price=Number(payload.price_to_beat), retrieved=Date.parse(payload.retrieved_at);
  const start=Date.parse(payload.contract_start_at), end=Date.parse(payload.contract_end_at);
  if(!Number.isFinite(price)||price<=0||!Number.isFinite(retrieved)||!Number.isFinite(start)||!Number.isFinite(end))return null;
- if(end-start!==900000||nowMs<start||nowMs>=end||retrieved>nowMs+1000||nowMs-retrieved>30000)return null;
+ if(end-start!==900000||nowMs<start||nowMs>=end||retrieved>nowMs+1000||nowMs-retrieved>120000)return null;
  return price;
 }
 function updatePtbForContract(contractId,payload,nowMs=Date.now()){
