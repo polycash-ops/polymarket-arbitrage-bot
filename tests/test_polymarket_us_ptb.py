@@ -21,7 +21,7 @@ class OfficialPtbAcquisitionTests(unittest.TestCase):
         }
 
     def test_slug_is_current_15_minute_utc_boundary(self):
-        self.assertEqual(self.slug, "btc-updown-15m-2026-10-18-1200z")
+        self.assertEqual(self.slug, "cpc-btc-updown-15m-2026-10-18-1200z")
         self.assertEqual(current_btc_15m_slug(self.now), self.slug)
 
     def test_reads_explicit_official_us_price_to_beat(self):
