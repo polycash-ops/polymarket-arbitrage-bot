@@ -180,7 +180,7 @@ function renderContractPriceChart(d){
  const x=t=>L+(t-points[0].t)/(Math.max(1,points[points.length-1].t-points[0].t))*iw;
  const y=v=>T+(1-v)*ih;
  const host=el("contractPriceChart");if(!host)return;host.replaceChildren();
- const svg=svgNode("svg",{viewBox:`0 0 ${W} ${H}`,width:"100%",height:"auto",role:"img","aria-label":"Exact contract midpoint time series with alert issuance markers"});
+ const svg=svgNode("svg",{viewBox:`0 0 ${W} ${H}`,width:"100%",style:"height:auto",role:"img","aria-label":"Exact contract midpoint time series with alert issuance markers"});
  [0,.25,.5,.75,1].forEach(v=>{svg.appendChild(svgNode("line",{x1:L,y1:y(v),x2:W-R,y2:y(v),stroke:"#34465c","stroke-width":1}));svg.appendChild(svgNode("text",{x:L-8,y:y(v)+4,"text-anchor":"end",fill:"#9aabc0","font-size":12},(v*100).toFixed(0)+"¢"));});
  const line=points.map(p=>`${x(p.t).toFixed(2)},${y(p.v).toFixed(2)}`).join(" ");svg.appendChild(svgNode("polyline",{points:line,fill:"none",stroke:"#65b8ff","stroke-width":2.5,"stroke-linejoin":"round","stroke-linecap":"round"}));
  const start=new Date(d.window_start),end=new Date(d.window_end);svg.appendChild(svgNode("text",{x:L,y:H-10,fill:"#9aabc0","font-size":12},start.toLocaleTimeString("en-US",{timeZone:"America/New_York",hour:"2-digit",minute:"2-digit"})+" ET"));svg.appendChild(svgNode("text",{x:W-R,y:H-10,"text-anchor":"end",fill:"#9aabc0","font-size":12},end.toLocaleTimeString("en-US",{timeZone:"America/New_York",hour:"2-digit",minute:"2-digit"})+" ET"));
