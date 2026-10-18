@@ -1,0 +1,32 @@
+name: Signal Oracle Track B tests
+
+on:
+  pull_request:
+    paths:
+      - "main.py"
+      - "dashboard.py"
+      - "polymarket_us_ptb.py"
+      - "canonical_resolver.py"
+      - "bot/signal_oracle*.py"
+      - "tests/test_signal_oracle*.py"
+      - "tests/test_polymarket_us_ptb.py"
+      - "PROPOSED_SIGNAL_ORACLE_MIGRATION.sql"
+      - ".github/workflows/signal-oracle-track-b-tests.yml"
+  workflow_dispatch:
+
+jobs:
+  oracle-unit-tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Compile integration modules
+        run: |
+          python -m py_compile main.py dashboard.py polymarket_us_ptb.py canonical_resolver.py
+          python -m py_compile bot/signal_oracle.py bot/signal_oracle_binance.py bot/signal_oracle_postgres.py
+      - name: Run Oracle and Binance tests
+        run: python -m unittest discover -s tests -p 'test_signal_oracle*.py' -v
+      - name: Run official US PTB safety tests
+        run: python -m unittest discover -s tests -p 'test_polymarket_us_ptb.py' -v
