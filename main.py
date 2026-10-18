@@ -511,8 +511,8 @@ class TradingBot:
         entry_cutoff = max(0, int(os.getenv("SIGNAL_ORACLE_ENTRY_CUTOFF_SECONDS", "60")))
         while True:
             now = datetime.now(timezone.utc)
+            start, end = research_window(now)
             try:
-                start, end = research_window(now)
                 # The exact Binance candle open is the benchmark. The ticker is
                 # displayed separately and can never replace that benchmark.
                 candle = await asyncio.to_thread(
@@ -640,6 +640,9 @@ class TradingBot:
                 logger.exception("SIGNAL_ORACLE_TRACK_B_FAILED")
                 try:
                     store = OraclePostgresStore()
+                    await asyncio.to_thread(store.record_unavailable_window,
+                        start.isoformat(), end.isoformat(),
+                        type(exc).__name__ + ": " + str(exc), heartbeat_at=now.isoformat())
                     await asyncio.to_thread(store.heartbeat, state="error",
                         message=type(exc).__name__ + ": " + str(exc), at=now.isoformat())
                 except Exception:
