@@ -318,8 +318,8 @@ def oracle_track_b_status():
         import psycopg
         from psycopg.rows import dict_row
         with psycopg.connect(url, connect_timeout=4, row_factory=dict_row) as conn:
-            ready = conn.execute("SELECT to_regclass('public.oracle_decisions') AS decisions, to_regclass('public.oracle_source_forecasts') AS forecasts").fetchone()
-            if not ready["decisions"] or not ready["forecasts"]:
+            ready = conn.execute("SELECT to_regclass('public.oracle_decisions') AS decisions, to_regclass('public.oracle_source_forecasts') AS forecasts, to_regclass('public.oracle_paper_entries') AS entries, to_regclass('public.oracle_track_b_state') AS state, to_regclass('public.oracle_model_versions') AS models, to_regclass('public.oracle_learning_runs') AS learning").fetchone()
+            if not all(ready[k] for k in ("decisions", "forecasts", "entries", "state", "models", "learning")):
                 return jsonify({"ok": True, "schema_ready": False, "status": "INITIALIZING",
                     "model_version": "baseline-follow-main-v1", "baseline": True,
                     "learning_status": "Waiting for worker schema initialization; baseline has no trained weights.",
