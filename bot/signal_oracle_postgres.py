@@ -45,16 +45,17 @@ class OraclePostgresStore:
                   (window_id, window_start, window_end, contract_id, contract_verified,
                    benchmark_name, benchmark_qualifier, benchmark_symbol, benchmark_interval,
                    benchmark_quote_currency, benchmark_price, benchmark_source_timestamp,
-                   benchmark_acquired_at, benchmark_status, current_price, current_price_timestamp,
+                   benchmark_acquired_at, benchmark_status, benchmark_reason, current_price, current_price_timestamp,
                    current_signal, current_signal_reason, strategy_version,
                    candle_close_price, candle_close_source_timestamp, candle_finalized,
                    outcome, heartbeat_at, updated_at)
-                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'available',%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,now())
+                VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'available',NULL,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,now())
                 ON CONFLICT (window_start) DO UPDATE SET
                   contract_id = COALESCE(signal_oracle_windows.contract_id, EXCLUDED.contract_id),
                   contract_verified = signal_oracle_windows.contract_verified OR EXCLUDED.contract_verified,
                   current_price = EXCLUDED.current_price,
                   current_price_timestamp = EXCLUDED.current_price_timestamp,
+                  benchmark_reason = NULL,
                   current_signal = EXCLUDED.current_signal,
                   current_signal_reason = EXCLUDED.current_signal_reason,
                   strategy_version = EXCLUDED.strategy_version,
@@ -78,6 +79,34 @@ class OraclePostgresStore:
                 heartbeat_at or datetime.now(timezone.utc).isoformat(),
             )).fetchone()
         return dict(row)
+
+    def record_unavailable_window(self, window_start: str, window_end: str, reason: str,
+                                  *, heartbeat_at: str | None = None) -> None:
+        """Persist unavailable state without inventing or replacing a benchmark."""
+        window_id = self._window_id(window_start)
+        with self._connect() as conn:
+            conn.execute("""
+                INSERT INTO signal_oracle_windows
+                  (window_id,window_start,window_end,benchmark_name,benchmark_qualifier,
+                   benchmark_symbol,benchmark_interval,benchmark_quote_currency,
+                   benchmark_status,benchmark_reason,current_signal,current_signal_reason,
+                   strategy_version,heartbeat_at,updated_at)
+                VALUES (%s,%s,%s,'Oracle paper PTB — Binance',
+                  'Binance window-open benchmark; not official Polymarket PTB.',
+                  'BTCUSDT','15m','USDT','unavailable',%s,'NO TRADE',%s,
+                  'oracle-logistic-head-v1',%s,now())
+                ON CONFLICT (window_start) DO UPDATE SET
+                  benchmark_status = CASE WHEN signal_oracle_windows.benchmark_price IS NULL
+                    THEN 'unavailable' ELSE signal_oracle_windows.benchmark_status END,
+                  benchmark_reason = CASE WHEN signal_oracle_windows.benchmark_price IS NULL
+                    THEN EXCLUDED.benchmark_reason ELSE signal_oracle_windows.benchmark_reason END,
+                  current_signal = CASE WHEN signal_oracle_windows.benchmark_price IS NULL
+                    THEN 'NO TRADE' ELSE signal_oracle_windows.current_signal END,
+                  current_signal_reason = CASE WHEN signal_oracle_windows.benchmark_price IS NULL
+                    THEN EXCLUDED.current_signal_reason ELSE signal_oracle_windows.current_signal_reason END,
+                  heartbeat_at=EXCLUDED.heartbeat_at,updated_at=now()
+            """, (window_id,window_start,window_end,reason,reason,
+                  heartbeat_at or datetime.now(timezone.utc).isoformat()))
 
     def pending_windows(self, limit: int = 20) -> list[dict[str, Any]]:
         """Recover previously observed windows after restart; no synthetic IDs."""
