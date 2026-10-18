@@ -131,3 +131,20 @@ def score_direction(prediction: str, candle: dict[str, Any]) -> dict[str, Any]:
         return {"status": "pending", "reason": "valid finalized candle outcome unavailable", "correct": None}
     return {"status": "resolved", "outcome": outcome, "correct": action == outcome,
             "accuracy_label": "Binance direction accuracy"}
+
+def fetch_current_quote(*, now: datetime | None = None,
+                        fetch_json: Callable[[str], Any] | None = None) -> dict[str, Any]:
+    """Fetch an informational current BTCUSDT ticker; never use it as the PTB."""
+    acquired = as_utc(now or datetime.now(timezone.utc))
+    url = BASE_URL.replace("/klines", "/ticker/price") + "?" + urlencode({"symbol": SYMBOL})
+    data = (fetch_json or (lambda target: _get_json(target)))(url)
+    if not isinstance(data, dict) or data.get("symbol") != SYMBOL:
+        raise ValueError("Binance current ticker symbol is not BTCUSDT")
+    try:
+        price = float(data.get("price"))
+    except (TypeError, ValueError) as exc:
+        raise ValueError("Binance current ticker price is invalid") from exc
+    if not math.isfinite(price) or price <= 0:
+        raise ValueError("Binance current ticker price must be finite and positive")
+    return {"symbol": SYMBOL, "price": price, "quote_timestamp": acquired.isoformat(),
+            "quote_timestamp_type": "local acquisition time; Binance ticker response has no source timestamp"}
