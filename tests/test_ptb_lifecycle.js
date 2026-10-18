@@ -37,7 +37,8 @@ assert.equal(api.canonicalPtbValue(good, 'btc-updown-15m-2026-10-18-1215z', now)
 assert.equal(api.canonicalPtbValue({...good, source:'polymarket_gamma'}, good.contract_id, now), null, 'international source is rejected');
 assert.equal(api.canonicalPtbValue({...good, contract_end_at:'2026-10-18T12:14:59Z'}, good.contract_id, now), null, 'wrong window length is rejected');
 assert.equal(api.canonicalPtbValue({...good, contract_end_at:'2026-10-18T11:59:59Z'}, good.contract_id, now), null, 'expired contract target is rejected');
-assert.equal(api.canonicalPtbValue({...good, retrieved_at:'2026-10-18T11:59:00Z'}, good.contract_id, now), null, 'stale API response is rejected');
+assert.equal(api.canonicalPtbValue({...good, retrieved_at:'2026-10-18T12:00:00Z'}, good.contract_id, Date.parse('2026-10-18T12:02:00Z')), 67234, 'API response exactly two minutes old is accepted');
+assert.equal(api.canonicalPtbValue({...good, retrieved_at:'2026-10-18T11:59:59Z'}, good.contract_id, Date.parse('2026-10-18T12:02:00Z')), null, 'API response older than two minutes is rejected');
 assert.equal(api.canonicalPtbValue({...good, retrieved_at:'2026-10-18T12:13:59Z'}, good.contract_id, Date.parse('2026-10-18T12:14:00Z')), 67234, 'fixed PTB remains valid when freshly re-read late in its contract window');
 assert.equal(api.isCurrentLiveQuoteResponse(2, 3), false, 'late response cannot overwrite newer request');
 assert.equal(api.isCurrentLiveQuoteResponse(3, 3), true);
