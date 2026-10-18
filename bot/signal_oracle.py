@@ -187,7 +187,7 @@ class OracleTestStore:
     def metrics(self, rolling_window: int = 100) -> dict[str, Any]:
         with self.connect() as db:
             rows = [dict(r) for r in db.execute("""SELECT * FROM oracle_predictions
-              WHERE status IN ('resolved','void') ORDER BY window_end DESC, issued_at DESC""")]
+              ORDER BY window_end DESC, issued_at DESC""")]
             trades = [dict(r) for r in db.execute("SELECT * FROM oracle_paper_trades")]
         eligible = [r for r in rows if r["status"] == "resolved" and r["action"] in {"UP","DOWN"}
                     and r["outcome"] in {"UP","DOWN"}]
