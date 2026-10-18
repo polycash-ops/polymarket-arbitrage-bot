@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS signal_oracle_windows (
   benchmark_source_timestamp TIMESTAMPTZ,
   benchmark_acquired_at TIMESTAMPTZ,
   benchmark_status TEXT NOT NULL,
+  benchmark_reason TEXT,
   current_price DOUBLE PRECISION,
   current_price_timestamp TIMESTAMPTZ,
   current_signal TEXT NOT NULL DEFAULT 'NO TRADE',
