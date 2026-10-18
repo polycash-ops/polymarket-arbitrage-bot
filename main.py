@@ -519,6 +519,9 @@ class TradingBot:
                     fetch_window_candle, start, retry_attempts=1, retry_interval=1.0
                 )
                 quote = await asyncio.to_thread(fetch_current_quote)
+                # Refresh evaluation time after network acquisition so a slow
+                # startup/poll cannot issue a prediction beyond the cutoff.
+                now = datetime.now(timezone.utc)
                 candle["current_price"] = quote["price"]
                 candle["current_price_timestamp"] = quote["quote_timestamp"]
                 candle["current_quote_timestamp_type"] = quote["quote_timestamp_type"]
