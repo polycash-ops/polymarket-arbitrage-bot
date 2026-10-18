@@ -518,13 +518,21 @@ class TradingBot:
                 candle = await asyncio.to_thread(
                     fetch_window_candle, start, retry_attempts=1, retry_interval=1.0
                 )
-                quote = await asyncio.to_thread(fetch_current_quote)
+                try:
+                    quote = await asyncio.to_thread(fetch_current_quote)
+                    candle["current_price"] = quote["price"]
+                    candle["current_price_timestamp"] = quote["quote_timestamp"]
+                    candle["current_quote_timestamp_type"] = quote["quote_timestamp_type"]
+                except Exception as quote_exc:
+                    # A missing informational ticker must not invalidate the
+                    # independently verified exact-candle open benchmark.
+                    logger.warning("SIGNAL_ORACLE_CURRENT_TICKER_UNAVAILABLE: %s", quote_exc)
+                    candle["current_price"] = None
+                    candle["current_price_timestamp"] = None
+                    candle["current_quote_timestamp_type"] = None
                 # Refresh evaluation time after network acquisition so a slow
                 # startup/poll cannot issue a prediction beyond the cutoff.
                 now = datetime.now(timezone.utc)
-                candle["current_price"] = quote["price"]
-                candle["current_price_timestamp"] = quote["quote_timestamp"]
-                candle["current_quote_timestamp_type"] = quote["quote_timestamp_type"]
 
                 # Only attach a Polymarket contract identity after the existing
                 # official US adapter and canonical resolver both validate it.
