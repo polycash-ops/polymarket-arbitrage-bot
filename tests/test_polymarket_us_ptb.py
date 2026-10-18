@@ -43,7 +43,7 @@ class OfficialPtbAcquisitionTests(unittest.TestCase):
         ):
             with self.subTest(terms=terms):
                 market = {**self.market, "assetPriceTerms": terms}
-                result = acquire_official_price_to_beat(self.now, fetch_json=lambda url, market=market: {"market": market})
+                result = acquire_official_price_to_beat(self.now, fetch_json=lambda url, market=market: {"market": market}, retry_attempts=0)
                 self.assertEqual(result["status"], "unavailable")
                 self.assertIsNone(result["price_to_beat"])
 
