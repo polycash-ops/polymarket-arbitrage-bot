@@ -516,9 +516,9 @@ class TradingBot:
                 # The exact Binance candle open is the benchmark. The ticker is
                 # displayed separately and can never replace that benchmark.
                 candle = await asyncio.to_thread(
-                    fetch_window_candle, start, now=now, retry_attempts=1, retry_interval=1.0
+                    fetch_window_candle, start, retry_attempts=1, retry_interval=1.0
                 )
-                quote = await asyncio.to_thread(fetch_current_quote, now=now)
+                quote = await asyncio.to_thread(fetch_current_quote)
                 candle["current_price"] = quote["price"]
                 candle["current_price_timestamp"] = quote["quote_timestamp"]
                 candle["current_quote_timestamp_type"] = quote["quote_timestamp_type"]
@@ -616,7 +616,7 @@ class TradingBot:
                         if pending_start >= start:
                             continue
                         old_candle = await asyncio.to_thread(
-                            fetch_window_candle, pending_start, now=now, retry_attempts=0
+                            fetch_window_candle, pending_start, retry_attempts=0
                         )
                         if old_candle.get("finalized") is not True:
                             continue
