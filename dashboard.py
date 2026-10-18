@@ -101,7 +101,7 @@ h1{font-size:clamp(1.5rem,4vw,2.2rem);line-height:1.15;margin:0 0 8px;letter-spa
   <article class="card"><div class="metric-label">Active Oracle version</div><div class="metric" id="oracleVersion">baseline</div><div class="metric-sub" id="oracleLearning">Baseline follows eligible source direction; no initial trained weights</div></article>
  </div>
  <p class="small" id="oracleMessage">Waiting for Oracle Track B persistence.</p>
- <div class="table-wrap"><table><thead><tr><th>Checkpoint · ET</th><th>Official window · ET</th><th>Official contract / PTB</th><th>Source forecast</th><th>Oracle signal / score</th><th>Decision / reason</th><th>Paper / fill status</th><th>Outcome</th></tr></thead><tbody id="oracleRows"><tr><td colspan="8" class="empty">No Oracle decisions recorded yet.</td></tr></tbody></table></div>
+ <div class="table-wrap"><table><thead><tr><th>Checkpoint · ET</th><th>Official window · ET</th><th>Official contract / PTB</th><th>Source forecast</th><th>Oracle signal / score</th><th>Agreement</th><th>Entry status / reason</th><th>Paper / fill status</th><th>Outcome</th></tr></thead><tbody id="oracleRows"><tr><td colspan="9" class="empty">No Oracle decisions recorded yet.</td></tr></tbody></table></div>
 </div></section>
 
 <section class="section panel"><div class="panel-inner">
@@ -220,13 +220,14 @@ async function refreshOracleTrackB(){
   put("oracleVersion",d.model_version||"—");const lr=d.latest_learning_run;let ls=d.learning_status||"Baseline/learning status unavailable";if(lr)ls+=" · baseline/candidate eval "+(lr.baseline_accuracy==null?"—":(100*Number(lr.baseline_accuracy)).toFixed(1)+"%")+"/"+(lr.candidate_accuracy==null?"—":(100*Number(lr.candidate_accuracy)).toFixed(1)+"%")+" · coverage "+(lr.candidate_coverage==null?"—":(100*Number(lr.candidate_coverage)).toFixed(1)+"%");put("oracleLearning",ls);
   put("oracleMessage",d.message||"Only authoritative verified outcomes count toward Oracle entry accuracy.");
   const body=el("oracleRows");body.replaceChildren();const items=Array.isArray(d.entries)?d.entries:[];
-  if(!items.length){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=8;td.className="empty";td.textContent="No Oracle decisions recorded yet. Metrics remain unavailable until eligible entries resolve.";tr.appendChild(td);body.appendChild(tr)}
+  if(!items.length){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=9;td.className="empty";td.textContent="No Oracle decisions recorded yet. Metrics remain unavailable until eligible entries resolve.";tr.appendChild(td);body.appendChild(tr)}
   items.forEach(x=>{const tr=document.createElement("tr");const direction=x.oracle_direction||"—";const values=[
     fmtTime(x.entry_at),
     fmtTime(x.window_start)+" → "+fmtTime(x.window_end),
     (x.official_market_id||x.market_slug||"—")+" · PTB "+(x.official_ptb==null?"—":Number(x.official_ptb).toFixed(2)),
     (x.source_direction||"—")+" · "+fmtTime(x.source_forecast_at),
     direction+" · score "+(x.oracle_score==null?"—":(100*Number(x.oracle_score)).toFixed(1)+"%"),
+    (!x.source_direction||!x.oracle_direction)?"N/A":(x.source_direction===x.oracle_direction?"AGREE":"DISAGREE"),
     (x.decision||"—")+" · "+(x.reason||"—"),
     (x.paper_entry_status||"—")+" · "+(x.fill_price==null?"fill unavailable":"fill "+Number(x.fill_price).toFixed(4)),
     (x.outcome||"PENDING")+(x.correct===true?" · CORRECT":x.correct===false?" · INCORRECT":"")
