@@ -61,7 +61,7 @@ def acquire_official_price_to_beat(
     now: datetime | None = None,
     *,
     fetch_json: Callable[[str], dict[str, Any]] | None = None,
-    retry_attempts: int = 30,
+    retry_attempts: int = 0,
     retry_interval: float = 2.0,
     sleep_fn: Callable[[float], None] = time.sleep,
 ) -> dict[str, Any]:
