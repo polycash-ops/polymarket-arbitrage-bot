@@ -431,7 +431,9 @@ def live_quotes():
     reference = next(({"source": name.upper(), "price": q.get("price"), "received_at": q.get("received_at")}
                       for name in ("binance", "coinbase", "kraken")
                       if (q := sources.get(name, {})).get("price") is not None), {})
-    candidate = acquire_official_price_to_beat()
+    # One short boundary retry keeps the UI responsive; longer retry
+    # policies belong in a background worker, never a 60-second HTTP request.
+    candidate = acquire_official_price_to_beat(retry_attempts=1, retry_interval=2.0)
     if candidate.get("status") == "unavailable":
         poly = candidate
     else:
