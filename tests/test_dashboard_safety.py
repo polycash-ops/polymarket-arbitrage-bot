@@ -3,6 +3,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 DASHBOARD = (ROOT / "dashboard.py").read_text(encoding="utf-8")
+PTB_ADAPTER = (ROOT / "polymarket_us_ptb.py").read_text(encoding="utf-8")
 
 
 class DashboardSafetyTests(unittest.TestCase):
@@ -10,18 +11,21 @@ class DashboardSafetyTests(unittest.TestCase):
         self.assertNotIn("gamma-api.polymarket.com", DASHBOARD)
         self.assertNotIn("clob.polymarket.com", DASHBOARD)
 
-    def test_exchange_and_observation_prices_are_not_ptb(self):
+    def test_official_us_market_field_is_the_only_ptb_producer(self):
+        self.assertIn("acquire_official_price_to_beat()", DASHBOARD)
+        self.assertIn("market.assetPriceTerms.priceToBeat", PTB_ADAPTER)
+        self.assertIn("https://gateway.polymarket.us/v1/market/slug/{}", PTB_ADAPTER)
+        self.assertIn("priceToBeat", PTB_ADAPTER)
         self.assertIn("Exchange reference (not PTB)", DASHBOARD)
         self.assertIn("NULL::double precision AS price_to_beat", DASHBOARD)
-        self.assertIn('x.price_to_beat==null?"UNAVAILABLE":usd(x.price_to_beat)', DASHBOARD)
 
     def test_target_lifecycle_is_fail_closed(self):
         self.assertIn("function canonicalPtbValue", DASHBOARD)
-        self.assertIn("payload.source!==\"polymarket_us_official\"", DASHBOARD)
+        self.assertIn('payload.source!=="polymarket_us_official"', DASHBOARD)
         self.assertIn("payload.contract_id!==expectedContractId", DASHBOARD)
+        self.assertIn("function expectedCurrentUsContractId", DASHBOARD)
         self.assertIn("function isCurrentLiveQuoteResponse", DASHBOARD)
-        self.assertIn("updatePtbForContract(activeTrustedUsContractId,ptb)", DASHBOARD)
-        self.assertNotIn("updatePtbForContract(ptb.contract_id", DASHBOARD)
+        self.assertIn("updatePtbForContract(expectedCurrentUsContractId(),ptb)", DASHBOARD)
         self.assertIn("if(!isCurrentLiveQuoteResponse(requestId,liveQuoteRequestId))return", DASHBOARD)
         self.assertIn("clearPtb();", DASHBOARD)
 
