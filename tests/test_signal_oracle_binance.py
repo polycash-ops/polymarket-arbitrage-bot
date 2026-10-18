@@ -2,7 +2,7 @@ import unittest
 from datetime import datetime, timezone
 
 from bot.signal_oracle_binance import (
-    CANDLE_MS, fetch_window_candle, parse_kline, research_window, score_direction,
+    CANDLE_MS, fetch_current_quote, fetch_window_candle, parse_kline, research_window, score_direction,
 )
 
 
@@ -43,6 +43,30 @@ class BinancePaperPtbTests(unittest.TestCase):
             acquired_at=datetime(2026, 10, 18, 12, 16, tzinfo=timezone.utc), require_final=True)
         self.assertEqual(candle["outcome"], "TIE")
         self.assertEqual(score_direction("UP", candle)["status"], "tie")
+
+    def test_down_outcome_and_incorrect_prediction(self):
+        row = list(self.row)
+        row[4] = "79900.0"
+        candle = parse_kline([row], self.start,
+            acquired_at=datetime(2026, 10, 18, 12, 16, tzinfo=timezone.utc), require_final=True)
+        self.assertEqual(candle["outcome"], "DOWN")
+        self.assertFalse(score_direction("UP", candle)["correct"])
+        self.assertTrue(score_direction("DOWN", candle)["correct"])
+
+    def test_invalid_open_price_rejected(self):
+        row = list(self.row)
+        row[1] = "NaN"
+        with self.assertRaisesRegex(ValueError, "finite and positive"):
+            parse_kline([row], self.start,
+                acquired_at=datetime(2026, 10, 18, 12, 16, tzinfo=timezone.utc))
+
+    def test_current_quote_is_separate_and_symbol_checked(self):
+        quote = fetch_current_quote(now=datetime(2026, 10, 18, 12, 7, tzinfo=timezone.utc),
+            fetch_json=lambda url: {"symbol": "BTCUSDT", "price": "80321.5"})
+        self.assertEqual(quote["price"], 80321.5)
+        self.assertEqual(quote["quote_timestamp"], "2026-10-18T12:07:00+00:00")
+        with self.assertRaisesRegex(ValueError, "symbol"):
+            fetch_current_quote(fetch_json=lambda url: {"symbol": "BTCUSD", "price": "80321.5"})
 
     def test_no_trade_is_excluded(self):
         candle = parse_kline([self.row], self.start,
