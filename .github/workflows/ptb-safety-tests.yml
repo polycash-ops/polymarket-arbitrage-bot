@@ -1,0 +1,41 @@
+name: PTB safety tests
+
+on:
+  pull_request:
+    paths:
+      - "dashboard.py"
+      - "canonical_resolver.py"
+      - "tests/test_dashboard_safety.py"
+      - "tests/test_canonical_resolver.py"
+      - "tests/test_ptb_lifecycle.js"
+      - ".github/workflows/ptb-safety-tests.yml"
+  push:
+    paths:
+      - "dashboard.py"
+      - "canonical_resolver.py"
+      - "tests/test_dashboard_safety.py"
+      - "tests/test_canonical_resolver.py"
+      - "tests/test_ptb_lifecycle.js"
+      - ".github/workflows/ptb-safety-tests.yml"
+
+jobs:
+  ptb-safety:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Compile production dashboard and resolver
+        run: python -m py_compile dashboard.py canonical_resolver.py
+      - name: Run PTB resolver and dashboard safety tests
+        run: python -m unittest discover -s tests -v
+      - name: Syntax-check dashboard inline JavaScript
+        run: |
+          python -c 'import pathlib,re; s=pathlib.Path("dashboard.py").read_text(); m=re.search(r"<script>([\s\S]*?)</script>", s); assert m; pathlib.Path("/tmp/dashboard-inline.js").write_text(m.group(1))'
+          node --check /tmp/dashboard-inline.js
+      - name: Run frontend lifecycle tests
+        run: node tests/test_ptb_lifecycle.js
