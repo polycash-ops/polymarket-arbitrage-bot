@@ -67,5 +67,19 @@ class OfficialPtbAcquisitionTests(unittest.TestCase):
         self.assertIn("TimeoutError", result["reason"])
 
 
+    def test_retries_only_transient_missing_price_to_beat(self):
+        responses = []
+        empty = {**self.market, "assetPriceTerms": {**self.market["assetPriceTerms"], "priceToBeat": None}}
+        def fetch(url):
+            responses.append(url)
+            return {"market": empty if len(responses) == 1 else self.market}
+        sleeps = []
+        result = acquire_official_price_to_beat(self.now, fetch_json=fetch,
+            retry_attempts=1, retry_interval=0.25, sleep_fn=sleeps.append)
+        self.assertEqual(result["source"], "polymarket_us_official")
+        self.assertEqual(len(responses), 2)
+        self.assertEqual(sleeps, [0.25])
+
+
 if __name__ == "__main__":
     unittest.main()
