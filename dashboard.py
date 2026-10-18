@@ -1,5 +1,6 @@
 """Responsive Flask dashboard for paper-only Connectome research."""
 import asyncio
+import hashlib
 import logging
 import os
 import threading
@@ -7,12 +8,34 @@ import threading
 from canonical_resolver import resolve_price_to_beat, unavailable_price_to_beat
 from polymarket_us_ptb import acquire_official_price_to_beat, current_btc_15m_slug
 from datetime import datetime
+from urllib.parse import urlparse
 
 from flask import Flask, jsonify
 from main import TradingBot
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
+
+
+def _log_database_target_fingerprints():
+    """Log host/database hashes only; never reveal credentials or raw URLs."""
+    for key in ("CONNECTOME_DATABASE_URL", "RESERVOIR_SOURCE_DATABASE_URL",
+                "RESEARCH_DATABASE_URL", "DATABASE_URL"):
+        raw = os.getenv(key)
+        if not raw:
+            logging.info("DB_TARGET_FINGERPRINT env_key=%s configured=false", key)
+            continue
+        parsed = urlparse(raw)
+        host = (parsed.hostname or "").lower()
+        database = parsed.path.lstrip("/")
+        if not host or not database:
+            logging.info("DB_TARGET_FINGERPRINT env_key=%s configured=true fingerprint=unavailable", key)
+            continue
+        fingerprint = hashlib.sha256(f"{host}/{database}".encode("utf-8")).hexdigest()[:12]
+        logging.info("DB_TARGET_FINGERPRINT env_key=%s host_db_sha256_12=%s", key, fingerprint)
+
+
+_log_database_target_fingerprints()
 bot = None
 bot_error = None
 lock = threading.Lock()
