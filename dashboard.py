@@ -9,39 +9,81 @@ from functools import wraps
 
 from canonical_resolver import resolve_price_to_beat, unavailable_price_to_beat
 from polymarket_us_ptb import acquire_official_price_to_beat, current_btc_15m_slug
-from datetime import datetime
+from datetime import datetime, timedelta
 from urllib.parse import urlparse
 
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, redirect, request, session
 from main import TradingBot
 
 app = Flask(__name__)
+app.secret_key = os.getenv("ORACLE_DASHBOARD_SESSION_SECRET") or None
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SECURE=True,
+    SESSION_COOKIE_SAMESITE="Strict",
+    PERMANENT_SESSION_LIFETIME=timedelta(hours=8),
+)
 logging.basicConfig(level=logging.INFO)
 
 
 def require_auth(view):
-    """Fail closed for Oracle telemetry unless a configured token is presented.
+    """Require a server-authenticated read-only session or a machine API token.
 
-    A same-origin auth gateway may supply the oracle_dashboard_token cookie;
-    API clients may use Authorization: Bearer <token> or X-Oracle-Dashboard-Token.
-    The token is never embedded in HTML or logged.
+    Browser login uses a server-side credential check and Flask's signed session.
+    API tokens are accepted only in headers or the optional gateway-set cookie;
+    no secret is embedded in dashboard HTML or JavaScript.
     """
     @wraps(view)
     def wrapped(*args, **kwargs):
+        if session.get("oracle_authenticated") is True:
+            return view(*args, **kwargs)
         expected = os.getenv("ORACLE_DASHBOARD_API_TOKEN")
         if not expected:
             return jsonify({"ok": False, "status": "AUTH NOT CONFIGURED",
-                            "message": "Oracle telemetry is unavailable until ORACLE_DASHBOARD_API_TOKEN is configured.",
+                            "message": "Configure the Oracle dashboard login (username, password, and session secret) or API token.",
                             "metrics": {}, "entries": [], "live_trading_enabled": False}), 503
         authorization = request.headers.get("Authorization", "")
         bearer = authorization[7:].strip() if authorization.lower().startswith("bearer ") else ""
         supplied = bearer or request.headers.get("X-Oracle-Dashboard-Token", "") or request.cookies.get("oracle_dashboard_token", "")
         if not supplied or not hmac.compare_digest(str(supplied), str(expected)):
             return jsonify({"ok": False, "status": "UNAUTHORIZED",
-                            "message": "Valid Oracle dashboard authentication is required.",
+                            "message": "Sign in at /oracle-login or use an authorized API client.",
                             "metrics": {}, "entries": [], "live_trading_enabled": False}), 401
         return view(*args, **kwargs)
     return wrapped
+
+
+@app.route("/oracle-login", methods=["GET", "POST"])
+def oracle_login():
+    """Authenticate a human viewer into a short-lived, read-only Oracle session."""
+    username = os.getenv("ORACLE_DASHBOARD_USERNAME")
+    password = os.getenv("ORACLE_DASHBOARD_PASSWORD")
+    session_secret = os.getenv("ORACLE_DASHBOARD_SESSION_SECRET")
+    if not username or not password or not session_secret or not app.secret_key:
+        return ("Oracle browser login is not configured. Set ORACLE_DASHBOARD_USERNAME, "
+                "ORACLE_DASHBOARD_PASSWORD, and ORACLE_DASHBOARD_SESSION_SECRET.", 503)
+    if request.method == "GET":
+        return """<!doctype html><html lang="en"><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Oracle telemetry sign-in</title>
+<style>body{font:16px system-ui;max-width:28rem;margin:12vh auto;padding:1.5rem;background:#0b111a;color:#edf3fa}
+label,input,button{display:block;width:100%;box-sizing:border-box;margin:.6rem 0}
+input,button{padding:.8rem;border-radius:.5rem}input{border:1px solid #526176;background:#141e2b;color:inherit}
+button{border:0;background:#54d6a0;color:#102018;font-weight:700}</style>
+<h1>Oracle telemetry sign-in</h1><p>Read-only research telemetry. This does not authorize trading or operational controls.</p>
+<form method="post" action="/oracle-login">
+<label for="username">Username</label><input id="username" name="username" autocomplete="username" required>
+<label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" required>
+<button type="submit">Sign in</button></form></html>"""
+    supplied_user = request.form.get("username", "")
+    supplied_password = request.form.get("password", "")
+    if not (hmac.compare_digest(supplied_user, username) and hmac.compare_digest(supplied_password, password)):
+        return ("Invalid username or password.", 401)
+    session.clear()
+    session["oracle_authenticated"] = True
+    session["oracle_role"] = "read_only"
+    session.permanent = True
+    return redirect("/", code=303)
 
 
 def _log_database_target_fingerprints():
@@ -150,7 +192,7 @@ h1{font-size:clamp(1.5rem,4vw,2.2rem);line-height:1.15;margin:0 0 8px;letter-spa
   <article class="card"><div class="metric-label">Entries / skips</div><div class="metric" id="oracleEntriesSkips">—</div><div class="metric-sub" id="oraclePending">Pending: —</div></article>
   <article class="card"><div class="metric-label">Active Oracle version</div><div class="metric" id="oracleVersion">baseline</div><div class="metric-sub" id="oracleLearning">Baseline follows eligible source direction; no initial trained weights</div></article>
  </div>
- <p class="small" id="oracleMessage">Waiting for Oracle Track B persistence.</p>
+ <p class="small" id="oracleMessage">Waiting for Oracle Track B persistence. <a href="/oracle-login">Sign in to view private Oracle telemetry</a>.</p>
  <div class="table-wrap"><table><thead><tr><th>Checkpoint · ET</th><th>Official window · ET</th><th>Official contract / PTB</th><th>Source forecast</th><th>Oracle signal / score</th><th>Agreement</th><th>Entry status / reason</th><th>Paper / fill status</th><th>Outcome</th><th>Checkpoint processing / spot quotes</th></tr></thead><tbody id="oracleRows"><tr><td colspan="10" class="empty">No Oracle decisions recorded yet.</td></tr></tbody></table></div>
 </div></section>
 
