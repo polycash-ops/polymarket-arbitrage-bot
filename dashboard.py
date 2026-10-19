@@ -1,20 +1,47 @@
 """Responsive Flask dashboard for paper-only Connectome research."""
 import asyncio
 import hashlib
+import hmac
 import logging
 import os
 import threading
+from functools import wraps
 
 from canonical_resolver import resolve_price_to_beat, unavailable_price_to_beat
 from polymarket_us_ptb import acquire_official_price_to_beat, current_btc_15m_slug
 from datetime import datetime
 from urllib.parse import urlparse
 
-from flask import Flask, jsonify
+from flask import Flask, jsonify, request
 from main import TradingBot
 
 app = Flask(__name__)
 logging.basicConfig(level=logging.INFO)
+
+
+def require_auth(view):
+    """Fail closed for Oracle telemetry unless a configured token is presented.
+
+    A same-origin auth gateway may supply the oracle_dashboard_token cookie;
+    API clients may use Authorization: Bearer <token> or X-Oracle-Dashboard-Token.
+    The token is never embedded in HTML or logged.
+    """
+    @wraps(view)
+    def wrapped(*args, **kwargs):
+        expected = os.getenv("ORACLE_DASHBOARD_API_TOKEN")
+        if not expected:
+            return jsonify({"ok": False, "status": "AUTH NOT CONFIGURED",
+                            "message": "Oracle telemetry is unavailable until ORACLE_DASHBOARD_API_TOKEN is configured.",
+                            "metrics": {}, "entries": [], "live_trading_enabled": False}), 503
+        authorization = request.headers.get("Authorization", "")
+        bearer = authorization[7:].strip() if authorization.lower().startswith("bearer ") else ""
+        supplied = bearer or request.headers.get("X-Oracle-Dashboard-Token", "") or request.cookies.get("oracle_dashboard_token", "")
+        if not supplied or not hmac.compare_digest(str(supplied), str(expected)):
+            return jsonify({"ok": False, "status": "UNAUTHORIZED",
+                            "message": "Valid Oracle dashboard authentication is required.",
+                            "metrics": {}, "entries": [], "live_trading_enabled": False}), 401
+        return view(*args, **kwargs)
+    return wrapped
 
 
 def _log_database_target_fingerprints():
@@ -115,7 +142,7 @@ h1{font-size:clamp(1.5rem,4vw,2.2rem);line-height:1.15;margin:0 0 8px;letter-spa
 </div></section>
 
 <section class="section panel"><div class="panel-inner">
- <div class="section-head"><div><h2>FlyWire Reservoir Oracle · Track B · PAPER ONLY</h2><p class="small">Independent Oracle decisions sourced from the Biological Reservoir main-track forecasts. Entry checkpoint = official contract start + 7 minutes; default execution tolerance 30 seconds. No exchange-derived settlement or live orders.</p></div><span id="oracleStatus" class="badge warn">INITIALIZING</span></div>
+ <div class="section-head"><div><h2>FlyWire Reservoir Oracle · Track B · PAPER ONLY</h2><p class="small">Independent Oracle decisions sourced from the Biological Reservoir main-track forecasts. Entry checkpoint = official contract start + 7 minutes; worker default tolerance 20 seconds; effective runtime tolerance is not exposed here. No exchange-derived settlement or live orders.</p></div><span id="oracleStatus" class="badge warn">INITIALIZING</span></div>
  <div class="cards">
   <article class="card"><div class="metric-label">Rolling accuracy · latest 100 resolved entries</div><div class="metric" id="oracleRolling">—</div><div class="metric-sub" id="oracleRollingMeta">No resolved Oracle entries yet</div></article>
   <article class="card"><div class="metric-label">Lifetime accuracy</div><div class="metric" id="oracleLifetime">—</div><div class="metric-sub" id="oracleLifetimeMeta">Correct / incorrect / resolved</div></article>
@@ -124,7 +151,7 @@ h1{font-size:clamp(1.5rem,4vw,2.2rem);line-height:1.15;margin:0 0 8px;letter-spa
   <article class="card"><div class="metric-label">Active Oracle version</div><div class="metric" id="oracleVersion">baseline</div><div class="metric-sub" id="oracleLearning">Baseline follows eligible source direction; no initial trained weights</div></article>
  </div>
  <p class="small" id="oracleMessage">Waiting for Oracle Track B persistence.</p>
- <div class="table-wrap"><table><thead><tr><th>Checkpoint · ET</th><th>Official window · ET</th><th>Official contract / PTB</th><th>Source forecast</th><th>Oracle signal / score</th><th>Agreement</th><th>Entry status / reason</th><th>Paper / fill status</th><th>Outcome</th></tr></thead><tbody id="oracleRows"><tr><td colspan="9" class="empty">No Oracle decisions recorded yet.</td></tr></tbody></table></div>
+ <div class="table-wrap"><table><thead><tr><th>Checkpoint · ET</th><th>Official window · ET</th><th>Official contract / PTB</th><th>Source forecast</th><th>Oracle signal / score</th><th>Agreement</th><th>Entry status / reason</th><th>Paper / fill status</th><th>Outcome</th><th>Checkpoint processing / spot quotes</th></tr></thead><tbody id="oracleRows"><tr><td colspan="10" class="empty">No Oracle decisions recorded yet.</td></tr></tbody></table></div>
 </div></section>
 
 <section class="section panel"><div class="panel-inner">
@@ -225,9 +252,27 @@ async function refreshLiveQuotes(){
 }
 
 
+function oracleCheckpointQuoteSummary(x){
+ const inputs=x.entry_inputs&&typeof x.entry_inputs==="object"?x.entry_inputs:{};
+ const quotes=inputs.spot_quote_snapshot&&typeof inputs.spot_quote_snapshot==="object"?inputs.spot_quote_snapshot:{};
+ const processed=x.checkpoint_processed_at?fmtTime(x.checkpoint_processed_at):"processing time unavailable";
+ const lag=x.checkpoint_processing_lag_seconds==null?"lag unavailable":Number(x.checkpoint_processing_lag_seconds).toFixed(1)+"s after checkpoint";
+ const parts=["Processed "+processed+" ("+lag+")"];
+ for(const key of ["coinbase","kraken","binance"]){
+  const q=quotes[key];if(!q||typeof q!=="object"){parts.push(key+": quote unavailable");continue}
+  const bid=q.bid==null?"—":Number(q.bid).toFixed(2),ask=q.ask==null?"—":Number(q.ask).toFixed(2),mid=q.midpoint==null?"—":Number(q.midpoint).toFixed(2);
+  const observed=q.observed_at?fmtTime(q.observed_at):"timestamp unavailable";
+  const checkpointAge=q.age_seconds_at_checkpoint==null?"age unavailable":Number(q.age_seconds_at_checkpoint).toFixed(1)+"s at checkpoint";
+  const currentAge=q.observed_at?Math.max(0,(Date.now()-Date.parse(q.observed_at))/1000):null;
+  const freshness=currentAge==null||!Number.isFinite(currentAge)?"current freshness unknown":"snapshot now "+Math.floor(currentAge)+"s old";
+  parts.push(key+" "+(q.product_id||"instrument unknown")+" "+(q.currency||"currency unknown")+" bid/ask "+bid+"/"+ask+" mid "+mid+" · "+observed+" · "+checkpointAge+" · "+freshness);
+ }
+ return parts.join(" | ");
+}
+
 async function refreshOracleTrackB(){
  try{
-  const r=await fetch("/api/oracle-track-b?ts="+Date.now(),{cache:"no-store"});
+  const r=await fetch("/api/oracle-track-b?ts="+Date.now(),{cache:"no-store",credentials:"same-origin"});
   const d=await r.json();if(!r.ok)throw new Error(d.message||("HTTP "+r.status));
   const m=d.metrics||{};const badge=el("oracleStatus");
   put("oracleStatus",d.status||"INITIALIZING");
@@ -241,9 +286,9 @@ async function refreshOracleTrackB(){
   put("oracleEntriesSkips",(m.entries??0)+" / "+(m.skips??0));
   put("oraclePending",(m.pending??0)+" pending · "+(m.excluded??m.skips??0)+" excluded/skipped");
   put("oracleVersion",d.model_version||"—");const lr=d.latest_learning_run;let ls=d.learning_status||"Baseline/learning status unavailable";if(lr)ls+=" · train "+(lr.training_samples??0)+" / validation "+(lr.validation_samples??0)+" · cutoff "+fmtTime(lr.training_cutoff)+" · baseline/candidate "+(lr.baseline_accuracy==null?"—":(100*Number(lr.baseline_accuracy)).toFixed(1)+"%")+"/"+(lr.candidate_accuracy==null?"—":(100*Number(lr.candidate_accuracy)).toFixed(1)+"%")+" · coverage "+(lr.candidate_coverage==null?"—":(100*Number(lr.candidate_coverage)).toFixed(1)+"%")+" · rollback "+(lr.rollback_version||"—");put("oracleLearning",ls);
-  put("oracleMessage",d.message||"Only authoritative verified outcomes count toward Oracle entry accuracy.");
+  put("oracleMessage",(d.message||"Only authoritative verified outcomes count toward Oracle entry accuracy.")+" Runtime tolerance: "+(d.runtime_tolerance_seconds==null?"UNKNOWN":""+d.runtime_tolerance_seconds+"s")+". Model metadata tolerance: "+(d.model_metadata_tolerance_seconds==null?"not recorded":d.model_metadata_tolerance_seconds+"s")+" ("+(d.model_metadata_tolerance_status||"not verified")+"). Discovery: "+((d.discovery&&d.discovery.status)||"unknown")+".");
   const body=el("oracleRows");body.replaceChildren();const items=Array.isArray(d.entries)?d.entries:[];
-  if(!items.length){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=9;td.className="empty";td.textContent="No Oracle decisions recorded yet. Metrics remain unavailable until eligible entries resolve.";tr.appendChild(td);body.appendChild(tr)}
+  if(!items.length){const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=10;td.className="empty";td.textContent="No Oracle decisions recorded yet. Metrics remain unavailable until eligible entries resolve.";tr.appendChild(td);body.appendChild(tr)}
   items.forEach(x=>{const tr=document.createElement("tr");const direction=x.oracle_direction||"—";const values=[
     fmtTime(x.entry_at),
     fmtTime(x.window_start)+" → "+fmtTime(x.window_end),
@@ -253,9 +298,15 @@ async function refreshOracleTrackB(){
     (!x.source_direction||!x.oracle_direction)?"N/A":(x.source_direction===x.oracle_direction?"AGREE":"DISAGREE"),
     (x.decision||"—")+" · "+(x.reason||"—"),
     (x.paper_entry_status||"—")+" · "+(x.fill_price==null?"fill unavailable":"fill "+Number(x.fill_price).toFixed(4)),
-    (x.outcome||"PENDING")+(x.correct===true?" · CORRECT":x.correct===false?" · INCORRECT":"")
+    (x.outcome||"PENDING")+(x.correct===true?" · CORRECT":x.correct===false?" · INCORRECT":""),
+    oracleCheckpointQuoteSummary(x)
   ];values.forEach((v,i)=>{const td=document.createElement("td");td.textContent=String(v);if(i===3)td.className=x.source_direction==="UP"?"good":x.source_direction==="DOWN"?"bad":"";if(i===4)td.className=direction==="UP"?"good":direction==="DOWN"?"bad":"";if(i===5)td.className=x.source_direction&&x.oracle_direction?(x.source_direction===x.oracle_direction?"good":"bad"):"warn";if(i===6)td.className=x.decision==="ENTER"?"good":"warn";if(i===8)td.className=x.correct===true?"good":x.correct===false?"bad":"warn";tr.appendChild(td)});body.appendChild(tr)});
- }catch(e){put("oracleStatus","ERROR");const badge=el("oracleStatus");if(badge)badge.className="badge bad";put("oracleMessage","Oracle Track B API unavailable: "+String(e.message||e))}
+ }catch(e){
+  put("oracleStatus","ERROR");const badge=el("oracleStatus");if(badge)badge.className="badge bad";
+  for(const id of ["oracleRolling","oracleRollingMeta","oracleLifetime","oracleLifetimeMeta","oracleCoverage","oracleCoverageMeta","oracleEntriesSkips","oraclePending","oracleVersion","oracleLearning"])put(id,"—");
+  const body=el("oracleRows");if(body){body.replaceChildren();const tr=document.createElement("tr"),td=document.createElement("td");td.colSpan=10;td.className="empty";td.textContent="Oracle data unavailable; previous values cleared to avoid presenting stale metrics.";tr.appendChild(td);body.appendChild(tr)}
+  put("oracleMessage","Oracle Track B API unavailable; values are cleared rather than showing stale data: "+String(e.message||e));
+ }
 }
 
 async function refreshVerifiedContracts(){
@@ -341,7 +392,7 @@ def oracle_track_b_status():
         import psycopg
         from psycopg.rows import dict_row
         with psycopg.connect(url, connect_timeout=4, row_factory=dict_row) as conn:
-            ready = conn.execute("SELECT to_regclass('public.oracle_decisions') AS decisions, to_regclass('public.oracle_source_forecasts') AS forecasts, to_regclass('public.oracle_paper_entries') AS entries, to_regclass('public.oracle_track_b_state') AS state, to_regclass('public.oracle_model_versions') AS models, to_regclass('public.oracle_learning_runs') AS learning").fetchone()
+            ready = conn.execute("SELECT to_regclass('public.oracle_decisions') AS decisions, to_regclass('public.oracle_source_forecasts') AS forecasts, to_regclass('public.oracle_paper_entries') AS entries, to_regclass('public.oracle_track_b_state') AS state, to_regclass('public.oracle_model_versions') AS models, to_regclass('public.oracle_learning_runs') AS learning, to_regclass('public.oracle_market_discovery') AS discovery").fetchone()
             if not all(ready[k] for k in ("decisions", "forecasts", "entries", "state", "models", "learning")):
                 return jsonify({"ok": True, "schema_ready": False, "status": "INITIALIZING",
                     "model_version": "baseline-follow-main-v1", "baseline": True,
@@ -375,7 +426,7 @@ def oracle_track_b_status():
             active = conn.execute("""
               SELECT version,status,trained_at,training_cutoff,training_samples,
                      validation_samples,validation_accuracy,baseline_accuracy,
-                     validation_coverage,baseline_coverage,details
+                     validation_coverage,baseline_coverage,parameters,details
               FROM oracle_model_versions
               WHERE status IN ('ACTIVE','PROMOTED','BASELINE')
               ORDER BY CASE status WHEN 'ACTIVE' THEN 0 WHEN 'PROMOTED' THEN 1 ELSE 2 END,
@@ -391,12 +442,28 @@ def oracle_track_b_status():
               SELECT d.market_slug,d.official_market_id,d.official_ptb,d.window_start,d.window_end,d.entry_at,
                      d.source_direction,d.oracle_direction,d.oracle_score,d.oracle_model_version,
                      d.decision,d.reason,d.source_forecast_at,d.source_age_seconds,
+                     d.checkpoint_processed_at,d.entry_inputs,
+                     EXTRACT(EPOCH FROM (d.checkpoint_processed_at - d.entry_at)) AS checkpoint_processing_lag_seconds,
                      COALESCE(e.fill_status,d.paper_entry_status) AS paper_entry_status,
                      e.fill_price,e.outcome,e.resolved_at,e.correct,d.created_at,d.updated_at
               FROM oracle_decisions d LEFT JOIN oracle_paper_entries e USING (market_slug)
               ORDER BY d.entry_at DESC,d.market_slug DESC LIMIT 100
             """).fetchall()
             latest_forecast = conn.execute("SELECT MAX(recorded_at) AS latest FROM oracle_source_forecasts").fetchone()["latest"]
+            discovery = {"available": bool(ready["discovery"]), "count": None, "latest_at": None, "status": "NOT AVAILABLE"}
+            if ready["discovery"]:
+                # Keep optional discovery telemetry isolated from the primary transaction.
+                conn.execute("SAVEPOINT oracle_discovery_optional")
+                try:
+                    discovery_row = conn.execute("SELECT COUNT(*) AS count, MAX(discovered_at) AS latest_at FROM oracle_market_discovery").fetchone()
+                    discovery = {"available": True, "count": int(discovery_row["count"] or 0),
+                                 "latest_at": discovery_row["latest_at"], "status": "AVAILABLE"}
+                    conn.execute("RELEASE SAVEPOINT oracle_discovery_optional")
+                except Exception as optional_exc:
+                    conn.execute("ROLLBACK TO SAVEPOINT oracle_discovery_optional")
+                    conn.execute("RELEASE SAVEPOINT oracle_discovery_optional")
+                    discovery = {"available": True, "count": None, "latest_at": None,
+                                 "status": "OPTIONAL QUERY FAILED: " + type(optional_exc).__name__}
         resolved_n = int(stats["resolved"] or 0)
         correct_n = int(stats["correct"] or 0)
         rolling_n = int(rolling["resolved"] or 0)
@@ -415,13 +482,37 @@ def oracle_track_b_status():
         baseline = bool(active and active["status"] == "BASELINE")
         learning_status = ("No learning run yet; collecting authoritative resolved entries."
                            if not learning else str(learning["reason"]))
+        def _model_tolerance_value(*objects):
+            for obj in objects:
+                if isinstance(obj, str):
+                    try:
+                        import json
+                        obj = json.loads(obj)
+                    except (TypeError, ValueError):
+                        continue
+                if isinstance(obj, dict) and obj.get("entry_tolerance_seconds") is not None:
+                    try:
+                        value = int(obj["entry_tolerance_seconds"])
+                        if 1 <= value <= 120:
+                            return value
+                    except (TypeError, ValueError, OverflowError):
+                        continue
+            return None
+        model_tolerance = _model_tolerance_value(active.get("parameters") if active else None,
+                                                 active.get("details") if active else None)
         return jsonify({"ok": True, "schema_ready": True, "status": status,
             "agent": "FlyWire Reservoir Oracle Track B",
             "source_track": "FlyWire Biological Reservoir main track",
             "model_version": active["version"] if active else "baseline-follow-main-v1",
             "baseline": baseline, "active_model": active, "latest_learning_run": learning,
             "learning_status": learning_status, "metrics": metrics, "entries": recent,
-            "entry_offset_seconds": 420, "entry_tolerance_seconds": 30,
+            "entry_offset_seconds": 420,
+            "runtime_tolerance_seconds": None,
+            "runtime_tolerance_status": "UNKNOWN: effective worker environment setting is not exposed by dashboard telemetry",
+            "model_metadata_tolerance_seconds": model_tolerance,
+            "model_metadata_tolerance_source": "oracle_model_versions.parameters/details" if model_tolerance is not None else "not recorded",
+            "model_metadata_tolerance_status": ("DIFFERS FROM WORKER CODE DEFAULT (20s); effective runtime setting remains unknown" if model_tolerance is not None and model_tolerance != 20 else "MATCHES WORKER CODE DEFAULT (20s), not proof of effective runtime" if model_tolerance == 20 else "NOT RECORDED"),
+            "discovery": discovery,
             "research_only": True, "live_trading_enabled": False,
             "message": "Only ENTER decisions with authoritative verified UP/DOWN outcomes count toward accuracy. SKIP is diagnostic; simulated fill remains unavailable without verified quotes and explicit assumptions."})
     except Exception as exc:
