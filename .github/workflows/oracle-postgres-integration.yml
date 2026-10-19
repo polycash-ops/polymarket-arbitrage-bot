@@ -1,0 +1,52 @@
+name: Oracle dashboard PostgreSQL integration
+on:
+  pull_request:
+    paths:
+      - "dashboard.py"
+      - "main.py"
+      - "requirements.txt"
+      - "tests/test_oracle_postgres_integration.py"
+      - "tests/fixtures/oracle_track_b_migration.sql"
+      - ".github/workflows/oracle-postgres-integration.yml"
+  push:
+    paths:
+      - "dashboard.py"
+      - "main.py"
+      - "requirements.txt"
+      - "tests/test_oracle_postgres_integration.py"
+      - "tests/fixtures/oracle_track_b_migration.sql"
+      - ".github/workflows/oracle-postgres-integration.yml"
+permissions:
+  contents: read
+jobs:
+  oracle-postgres-integration:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: oracle_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d oracle_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 12
+    env:
+      CONNECTOME_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/oracle_test
+      ORACLE_DASHBOARD_API_TOKEN: integration-test-token
+      ORACLE_DASHBOARD_USERNAME: integration-viewer
+      ORACLE_DASHBOARD_PASSWORD: integration-test-password
+      ORACLE_DASHBOARD_SESSION_SECRET: integration-session-secret-not-for-production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install application and test dependencies
+        run: python -m pip install -r requirements.txt
+      - name: Run real Flask/PostgreSQL Oracle integration tests
+        run: python -m pytest -v tests/test_oracle_postgres_integration.py
