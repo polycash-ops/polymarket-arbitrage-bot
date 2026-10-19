@@ -15,6 +15,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import psycopg
+from psycopg.rows import dict_row
 import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -63,7 +64,7 @@ def migrated_schema():
 @pytest.fixture
 def seeded_db(migrated_schema):
     now = datetime.now(timezone.utc)
-    with psycopg.connect(ADMIN_DSN) as conn:
+    with psycopg.connect(ADMIN_DSN, row_factory=dict_row) as conn:
         conn.execute("""
           TRUNCATE oracle_paper_entries, oracle_decisions, oracle_source_forecasts,
                    oracle_learning_runs, oracle_market_discovery RESTART IDENTITY CASCADE
@@ -146,17 +147,17 @@ def test_real_flask_routes_register_and_unauthenticated_or_wrong_token_is_denied
 
 
 def test_browser_login_creates_read_only_session_without_exposing_api_token(dashboard_module):
-    client = dashboard_module.app.test_client(base_url="https://localhost")
-    page = client.get("/oracle-login")
+    client = dashboard_module.app.test_client()
+    page = client.get("/oracle-login", base_url="https://localhost")
     assert page.status_code == 200
     assert b'name="password"' in page.data
     assert TOKEN.encode() not in page.data
     assert client.get("/api/oracle-track-b").status_code == 401
-    wrong = client.post("/oracle-login", data={"username": USERNAME, "password": "wrong"})
+    wrong = client.post("/oracle-login", base_url="https://localhost", data={"username": USERNAME, "password": "wrong"})
     assert wrong.status_code == 401
-    accepted = client.post("/oracle-login", data={"username": USERNAME, "password": PASSWORD})
+    accepted = client.post("/oracle-login", base_url="https://localhost", data={"username": USERNAME, "password": PASSWORD})
     assert accepted.status_code == 303
-    assert client.get("/api/oracle-track-b").status_code == 200
+    assert client.get("/api/oracle-track-b", base_url="https://localhost").status_code == 200
     assert dashboard_module.app.config["SESSION_COOKIE_HTTPONLY"] is True
     assert dashboard_module.app.config["SESSION_COOKIE_SECURE"] is True
     assert dashboard_module.app.config["SESSION_COOKIE_SAMESITE"] == "Strict"
