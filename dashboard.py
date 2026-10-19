@@ -4,6 +4,7 @@ import hashlib
 import hmac
 import logging
 import os
+import secrets
 import threading
 from functools import wraps
 
@@ -63,6 +64,10 @@ def oracle_login():
         return ("Oracle browser login is not configured. Set ORACLE_DASHBOARD_USERNAME, "
                 "ORACLE_DASHBOARD_PASSWORD, and ORACLE_DASHBOARD_SESSION_SECRET.", 503)
     if request.method == "GET":
+        csrf_token = session.get("oracle_login_csrf")
+        if not csrf_token:
+            csrf_token = secrets.token_urlsafe(32)
+            session["oracle_login_csrf"] = csrf_token
         return """<!doctype html><html lang="en"><meta charset="utf-8">
 <meta name="viewport" content="width=device-width,initial-scale=1">
 <title>Oracle telemetry sign-in</title>
@@ -72,9 +77,14 @@ input,button{padding:.8rem;border-radius:.5rem}input{border:1px solid #526176;ba
 button{border:0;background:#54d6a0;color:#102018;font-weight:700}</style>
 <h1>Oracle telemetry sign-in</h1><p>Read-only research telemetry. This does not authorize trading or operational controls.</p>
 <form method="post" action="/oracle-login">
+<input type="hidden" name="csrf_token" value="__LOGIN_CSRF_TOKEN__">
 <label for="username">Username</label><input id="username" name="username" autocomplete="username" required>
 <label for="password">Password</label><input id="password" name="password" type="password" autocomplete="current-password" required>
-<button type="submit">Sign in</button></form></html>"""
+<button type="submit">Sign in</button></form></html>""".replace("__LOGIN_CSRF_TOKEN__", csrf_token)
+    expected_csrf = session.get("oracle_login_csrf", "")
+    supplied_csrf = request.form.get("csrf_token", "")
+    if not expected_csrf or not supplied_csrf or not hmac.compare_digest(supplied_csrf, expected_csrf):
+        return ("Invalid or missing CSRF token.", 400)
     supplied_user = request.form.get("username", "")
     supplied_password = request.form.get("password", "")
     if not (hmac.compare_digest(supplied_user, username) and hmac.compare_digest(supplied_password, password)):
@@ -82,8 +92,22 @@ button{border:0;background:#54d6a0;color:#102018;font-weight:700}</style>
     session.clear()
     session["oracle_authenticated"] = True
     session["oracle_role"] = "read_only"
+    session["oracle_login_csrf"] = secrets.token_urlsafe(32)
     session.permanent = True
     return redirect("/", code=303)
+
+
+@app.post("/oracle-logout")
+def oracle_logout():
+    """Invalidate this browser's signed read-only session after a CSRF-checked POST."""
+    if session.get("oracle_authenticated") is not True:
+        return redirect("/oracle-login", code=303)
+    expected_csrf = session.get("oracle_login_csrf", "")
+    supplied_csrf = request.form.get("csrf_token", "")
+    if not expected_csrf or not supplied_csrf or not hmac.compare_digest(supplied_csrf, expected_csrf):
+        return ("Invalid or missing CSRF token.", 400)
+    session.clear()
+    return redirect("/oracle-login", code=303)
 
 
 def _log_database_target_fingerprints():
@@ -129,7 +153,7 @@ def _ensure_bot():
 @app.get("/")
 def index():
     """Serve only the independent Biological Reservoir research dashboard."""
-    return """<!doctype html>
+    html = """<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -150,7 +174,7 @@ h1{font-size:clamp(1.5rem,4vw,2.2rem);line-height:1.15;margin:0 0 8px;letter-spa
 </style>
 </head>
 <body><main>
-<header><div><h1>Biological Reservoir · independent research agent</h1><p class="subtitle">Persistent BTC-history research · graph observations and learning evidence · paper forecasting only</p></div><div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px"><span id="clock" class="pill">--:--:-- ET</span><span class="pill">LIVE TRADING BLOCKED</span></div></header>
+<header><div><h1>Biological Reservoir · independent research agent</h1><p class="subtitle">Persistent BTC-history research · graph observations and learning evidence · paper forecasting only</p></div><div style="display:flex;flex-wrap:wrap;align-items:center;gap:10px"><span id="clock" class="pill">--:--:-- ET</span><span class="pill">LIVE TRADING BLOCKED</span><!-- ORACLE_LOGOUT_FORM --></div></header>
 <section class="section panel"><div class="panel-inner">
  <div class="section-head"><h2>Reservoir agent status</h2><span id="bioStatus" class="badge warn">CHECKING</span></div>
  <p class="small" id="bioMessage">Connecting to persisted reservoir telemetry…</p>
@@ -363,6 +387,12 @@ async function refreshVerifiedContracts(){
 }
 clock();setInterval(clock,1000);refreshReservoir();setInterval(refreshReservoir,10000);refreshLiveQuotes();setInterval(refreshLiveQuotes,5000);refreshVerifiedContracts();setInterval(refreshVerifiedContracts,15000);refreshOracleTrackB();setInterval(refreshOracleTrackB,10000);
 </script></body></html>"""
+    logout_form = ""
+    if session.get("oracle_authenticated") is True:
+        csrf_token = session.get("oracle_login_csrf", "")
+        logout_form = ('<form method="post" action="/oracle-logout"><input type="hidden" name="csrf_token" value="'
+                       + csrf_token + '"><button type="submit">Sign out</button></form>')
+    return html.replace("<!-- ORACLE_LOGOUT_FORM -->", logout_form)
 
 
 @app.get("/api/biological-reservoir")

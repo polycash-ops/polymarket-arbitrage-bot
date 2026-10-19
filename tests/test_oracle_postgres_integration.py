@@ -11,10 +11,16 @@ from __future__ import annotations
 import importlib.util
 import json
 import os
+import re
+import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+if not os.environ.get("CONNECTOME_DATABASE_URL"):
+    raise unittest.SkipTest("Real Oracle PostgreSQL integration requires CONNECTOME_DATABASE_URL")
+
 import psycopg
+from itsdangerous import TimestampSigner
 from psycopg.rows import dict_row
 import pytest
 
@@ -146,21 +152,78 @@ def test_real_flask_routes_register_and_unauthenticated_or_wrong_token_is_denied
 
 
 
-def test_browser_login_creates_read_only_session_without_exposing_api_token(dashboard_module):
+def test_browser_login_csrf_safe_redirect_logout_and_secret_boundaries(dashboard_module, caplog):
     client = dashboard_module.app.test_client()
     page = client.get("/oracle-login", base_url="https://localhost")
     assert page.status_code == 200
     assert b'name="password"' in page.data
     assert TOKEN.encode() not in page.data
+    csrf = re.search(rb'name="csrf_token" value="([^"]+)"', page.data).group(1).decode()
     assert client.get("/api/oracle-track-b").status_code == 401
-    wrong = client.post("/oracle-login", base_url="https://localhost", data={"username": USERNAME, "password": "wrong"})
+    missing_csrf = client.post("/oracle-login", base_url="https://localhost",
+                               data={"username": USERNAME, "password": PASSWORD})
+    assert missing_csrf.status_code == 400
+    wrong = client.post("/oracle-login", base_url="https://localhost",
+                        data={"csrf_token": csrf, "username": USERNAME, "password": "wrong"})
     assert wrong.status_code == 401
-    accepted = client.post("/oracle-login", base_url="https://localhost", data={"username": USERNAME, "password": PASSWORD})
+    accepted = client.post("/oracle-login", base_url="https://localhost",
+                           data={"csrf_token": csrf, "username": USERNAME,
+                                 "password": PASSWORD, "next": "https://evil.example"})
     assert accepted.status_code == 303
-    assert client.get("/api/oracle-track-b", base_url="https://localhost").status_code == 200
+    assert accepted.headers["Location"] == "/"
+    cookie = "; ".join(accepted.headers.getlist("Set-Cookie"))
+    assert "Secure" in cookie and "HttpOnly" in cookie and "SameSite=Strict" in cookie
+    assert PASSWORD.encode() not in cookie and SESSION_SECRET.encode() not in cookie
+    api_response = client.get("/api/oracle-track-b", base_url="https://localhost")
+    assert api_response.status_code == 200
+    for secret in (TOKEN, USERNAME, PASSWORD, SESSION_SECRET):
+        assert secret.encode() not in api_response.get_data()
+        assert secret not in accepted.headers["Location"]
+    root = client.get("/", base_url="https://localhost")
+    assert b'action="/oracle-logout"' in root.data
+    for secret in (TOKEN, USERNAME, PASSWORD, SESSION_SECRET):
+        assert secret.encode() not in root.data
+        assert secret not in root.request.url
+        assert secret not in caplog.text
+    logout_csrf = re.search(rb'name="csrf_token" value="([^"]+)"', root.data).group(1).decode()
+    bad_logout = client.post("/oracle-logout", base_url="https://localhost", data={"csrf_token": "wrong"})
+    assert bad_logout.status_code == 400
+    logged_out = client.post("/oracle-logout", base_url="https://localhost", data={"csrf_token": logout_csrf})
+    assert logged_out.status_code == 303
+    assert logged_out.headers["Location"] == "/oracle-login"
+    assert client.get("/api/oracle-track-b", base_url="https://localhost").status_code == 401
     assert dashboard_module.app.config["SESSION_COOKIE_HTTPONLY"] is True
     assert dashboard_module.app.config["SESSION_COOKIE_SECURE"] is True
     assert dashboard_module.app.config["SESSION_COOKIE_SAMESITE"] == "Strict"
+    assert dashboard_module.app.config["PERMANENT_SESSION_LIFETIME"].total_seconds() == 8 * 60 * 60
+
+
+def test_permanent_session_cookie_expiry_is_enforced(dashboard_module, monkeypatch):
+    client = dashboard_module.app.test_client()
+    serializer = dashboard_module.app.session_interface.get_signing_serializer(dashboard_module.app)
+    assert serializer is not None
+    old_timestamp = int(datetime.now(timezone.utc).timestamp()) - 9 * 60 * 60
+    with monkeypatch.context() as patcher:
+        patcher.setattr(TimestampSigner, "get_timestamp", lambda self: old_timestamp)
+        expired_cookie = serializer.dumps({
+            "oracle_authenticated": True,
+            "oracle_role": "read_only",
+            "_permanent": True,
+        })
+    client.set_cookie(dashboard_module.app.config["SESSION_COOKIE_NAME"], expired_cookie, domain="localhost")
+    response = client.get("/api/oracle-track-b", base_url="https://localhost")
+    assert response.status_code == 401
+
+
+def test_missing_browser_login_configuration_fails_closed_for_each_required_value(dashboard_module, monkeypatch):
+    client = dashboard_module.app.test_client()
+    for key in ("ORACLE_DASHBOARD_USERNAME", "ORACLE_DASHBOARD_PASSWORD",
+                "ORACLE_DASHBOARD_SESSION_SECRET"):
+        monkeypatch.setenv("ORACLE_DASHBOARD_USERNAME", USERNAME)
+        monkeypatch.setenv("ORACLE_DASHBOARD_PASSWORD", PASSWORD)
+        monkeypatch.setenv("ORACLE_DASHBOARD_SESSION_SECRET", SESSION_SECRET)
+        monkeypatch.delenv(key, raising=False)
+        assert client.get("/oracle-login", base_url="https://localhost").status_code == 503
 
 
 def test_missing_api_token_configuration_fails_closed_for_anonymous_request(dashboard_module, monkeypatch):
